@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 """
-Version 0 DPDFNet microphone bridge for Windows 10/11.
+Version 0 DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire setups.
 
 What this file does
 -------------------
 This script turns a physical microphone into a "cleaned" virtual microphone by
-running DPDFNet in real time and sending the enhanced audio into a virtual cable
-device such as VB-CABLE.
+running DPDFNet in real time and sending the enhanced audio into a virtual audio
+endpoint.
 
-Target signal flow:
+Typical signal flows:
 
+Windows:
     physical mic -> this script -> VB-CABLE playback endpoint ("CABLE Input")
     chat/game/OBS app -> VB-CABLE recording endpoint ("CABLE Output")
 
-Use case:
-- Discord / Zoom / games / OBS / VOIP
+Linux with PipeWire:
+    physical mic -> this script -> PipeWire virtual sink playback endpoint
+    chat/game/OBS app -> matching monitor/source endpoint
+
+Supported target environments
+-----------------------------
+- Windows 10/11, ideally with WASAPI devices
+- Linux desktops running PipeWire, via the PortAudio host APIs exposed to
+  `sounddevice`
 - command-line-only
-- Windows 10/11
 - no plugin hosting
-- no Equalizer APO
 - no GUI
 - no AGC
 - no monitoring path
@@ -60,16 +66,31 @@ Important implementation facts
    but actual device selection remains ID-based.
 
 6) Same-host-API enforcement is deliberate.
-   On Windows, mixed host APIs for a duplex stream create avoidable pain.
-   The user should choose both devices from the same host API, ideally WASAPI.
+   On Windows and Linux via PortAudio, mixed host APIs for a duplex stream
+   create avoidable pain.
+   The user should choose both devices from the same host API.
+   - Windows: ideally WASAPI
+   - Linux/PipeWire: ideally a real PipeWire PortAudio backend if present,
+     otherwise PulseAudio, then JACK, then ALSA
 
-7) `list-devices` is optimized for first-run usability on Windows.
-   By default it shows recommended WASAPI candidates, probes whether devices can
-   open at the selected model sample rate, and prints a likely first-run command
-   when the choice looks obvious. Use `--all-apis` to show every PortAudio host
-   API instead.
+7) `list-devices` is optimized for first-run usability on Windows and Linux.
+   By default it shows recommended host-API candidates, probes whether devices
+   can open at the selected model sample rate, and prints a likely first-run
+   command when the choice looks obvious.
+   - Windows default filter: WASAPI
+   - Linux default filter: PipeWire if present, otherwise PulseAudio, then
+     JACK, then ALSA
+   Use `--all-apis` to show every PortAudio host API instead.
 
-8) Version 0 deliberately does not add a separate `validate` command.
+8) Linux PipeWire support here is not native PipeWire graph management.
+   Reason:
+   - `sounddevice` talks to PortAudio
+   - stock PortAudio usually reaches PipeWire through compatibility layers,
+     not through a dedicated native PipeWire host API
+   - so this script can work well on PipeWire systems, but it does not create
+     or manage PipeWire nodes itself
+
+9) Version 0 deliberately does not add a separate `validate` command.
    This is a design decision, not an omission by accident.
    Reason:
    - keeps the CLI surface small
@@ -77,8 +98,8 @@ Important implementation facts
    - pushes discovery into `list-devices`
    - uses `run` as the quick smoke test
 
-Recommended first run
----------------------
+Recommended first run on Windows
+--------------------------------
 1) Install VB-CABLE.
 2) Set your physical mic and VB-CABLE to 48 kHz in Windows sound settings.
 3) Install dependencies:
@@ -102,24 +123,60 @@ Recommended first run
 
    where:
    - --input  is your real microphone device ID
-   - --output is the VB-CABLE playback endpoint device ID, typically "CABLE Input"
+   - --output is the VB-CABLE playback endpoint device ID, typically
+     "CABLE Input"
 
 7) In Discord / OBS / your game:
    choose the VB-CABLE recording endpoint, typically "CABLE Output", as the mic.
+
+Recommended first run on Linux/PipeWire
+---------------------------------------
+1) Create a virtual sink.
+   If PipeWire's PulseAudio compatibility layer is available, one easy option is:
+
+       pactl load-module module-null-sink sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic
+
+2) Install dependencies:
+
+       pip install dpdfnet sounddevice
+
+3) Download the recommended model once:
+
+       dpdfnet download dpdfnet8_48khz_hr
+
+4) List recommended devices:
+
+       python mic_bridge.py list-devices
+
+   By default on Linux, this prefers a PipeWire host API if your PortAudio build
+   exposes one, otherwise PulseAudio, then JACK, then ALSA. Use `--all-apis` to
+   show every PortAudio device.
+
+5) Start the bridge:
+
+       python mic_bridge.py run --input 18 --output 16
+
+   where:
+   - --input  is your real microphone device ID
+   - --output is the virtual sink playback endpoint device ID
+
+6) In Discord / OBS / your app:
+   choose the matching monitor/source, often something like
+   "Monitor of DPDFNet_Mic", as the microphone.
 
 Explicit non-goals for Version 0
 --------------------------------
 - GUI
 - AGC
-- equalizer APO
-- VST/plugin wrapping
+- plugin hosting
 - model hot-switching while the stream is open
 - device hotplug recovery
-- background service / Windows startup
+- background service / OS startup integration
 - separate `validate` subcommand
 - timed runs (`--duration` flag was explicitly removed as a design decision)
 - packaging into an .exe
 - native C++ rewrite
+- native PipeWire node/graph management
 
 Future-maintainer / future-AI handoff notes
 -------------------------------------------
@@ -149,6 +206,11 @@ facts that should not be rediscovered from scratch:
 - If someone later adds GUI / AGC / monitoring / tray behavior, that should be
   layered on top of the same core bridge architecture, not mixed directly into
   the real-time callback.
+
+- Linux/PipeWire support here deliberately stays at the PortAudio layer.
+  If someone later wants native PipeWire graph construction, virtual node
+  creation, metadata control, or link management, that is a separate feature
+  set and likely a separate integration surface.
 
 - If someone later wants a separate `validate` command, treat that as a
   deliberate CLI design expansion. Version 0 intentionally keeps the workflow to
@@ -198,6 +260,10 @@ DEFAULT_BLOCK_MS = 10.0
 DEFAULT_LATENCY = "high"
 
 LIST_DEVICE_HOSTAPI_CHOICES: tuple[str, ...] = (
+    "pipewire",
+    "pulse",
+    "jack",
+    "alsa",
     "wasapi",
     "mme",
     "directsound",
@@ -206,11 +272,26 @@ LIST_DEVICE_HOSTAPI_CHOICES: tuple[str, ...] = (
 )
 
 HOSTAPI_FILTER_DISPLAY_NAMES: dict[str, str] = {
+    "pipewire": "PipeWire",
+    "pulse": "PulseAudio",
+    "jack": "JACK",
+    "alsa": "ALSA",
     "wasapi": "Windows WASAPI",
     "mme": "MME",
     "directsound": "Windows DirectSound",
     "wdm-ks": "Windows WDM-KS",
     "all": "all PortAudio host APIs",
+}
+
+HOSTAPI_FILTER_ALIASES: dict[str, tuple[str, ...]] = {
+    "pipewire": ("pipewire",),
+    "pulse": ("pulseaudio",),
+    "jack": ("jack audio connection kit", "jack"),
+    "alsa": ("alsa",),
+    "wasapi": ("windows wasapi", "wasapi"),
+    "mme": ("mme",),
+    "directsound": ("windows directsound", "directsound"),
+    "wdm-ks": ("windows wdm-ks", "wdm ks"),
 }
 
 CALLBACK_STATUS_FLAG_NAMES: tuple[str, ...] = (
@@ -283,9 +364,32 @@ def _format_tags(tags: tuple[str, ...]) -> str:
     return ", ".join(tags) if tags else "-"
 
 
+def _normalize_hostapi_name(name: str) -> str:
+    return " ".join(name.casefold().replace("_", " ").replace("-", " ").split())
+
+
 def _get_hostapi_names(sd_mod) -> list[str]:
     hostapis = sd_mod.query_hostapis()
     return [str(item["name"]) for item in hostapis]
+
+
+def _hostapi_filter_key_for_name(hostapi_name: str) -> Optional[str]:
+    normalized = _normalize_hostapi_name(hostapi_name)
+    for filter_name, aliases in HOSTAPI_FILTER_ALIASES.items():
+        for alias in aliases:
+            normalized_alias = _normalize_hostapi_name(alias)
+            if normalized == normalized_alias or normalized_alias in normalized:
+                return filter_name
+    return None
+
+
+def _available_known_hostapi_filters(hostapi_names: list[str]) -> set[str]:
+    available: set[str] = set()
+    for hostapi_name in hostapi_names:
+        key = _hostapi_filter_key_for_name(hostapi_name)
+        if key is not None:
+            available.add(key)
+    return available
 
 
 def _get_device_info(device_id: int) -> dict:
@@ -307,11 +411,12 @@ def _hostapi_name_for_device(info: dict, hostapi_names: list[str]) -> str:
 def _hostapi_matches_filter(hostapi_name: str, filter_name: str) -> bool:
     if filter_name == "all":
         return True
-    expected = HOSTAPI_FILTER_DISPLAY_NAMES[filter_name]
-    return hostapi_name.casefold() == expected.casefold()
+    return _hostapi_filter_key_for_name(hostapi_name) == filter_name
 
 
-def _resolve_list_hostapi_filter(args: argparse.Namespace) -> str:
+def _resolve_list_hostapi_filter(
+    args: argparse.Namespace, hostapi_names: list[str]
+) -> str:
     if args.all_apis:
         if args.hostapi not in (None, "all"):
             raise ValueError("Use either --all-apis or --hostapi, not both.")
@@ -320,18 +425,36 @@ def _resolve_list_hostapi_filter(args: argparse.Namespace) -> str:
     if args.hostapi is not None:
         return str(args.hostapi)
 
-    if platform.system() == "Windows":
-        return "wasapi"
+    system = platform.system()
+    available = _available_known_hostapi_filters(hostapi_names)
+
+    if system == "Windows":
+        return "wasapi" if "wasapi" in available else "all"
+
+    if system == "Linux":
+        for candidate in ("pipewire", "pulse", "jack", "alsa"):
+            if candidate in available:
+                return candidate
+        return "all"
 
     return "all"
 
 
 def _hostapi_preference_score(hostapi_name: str) -> int:
-    normalized = hostapi_name.casefold()
+    normalized = _normalize_hostapi_name(hostapi_name)
+
+    if normalized == "pipewire":
+        return 110
     if normalized == "windows wasapi":
         return 100
-    if normalized == "windows wdm-ks":
+    if normalized == "pulseaudio":
+        return 95
+    if normalized in ("jack audio connection kit", "jack"):
         return 80
+    if normalized == "windows wdm ks":
+        return 80
+    if normalized == "alsa":
+        return 60
     if normalized == "windows directsound":
         return 40
     if normalized == "mme":
@@ -358,6 +481,24 @@ def _infer_device_tags(name: str) -> tuple[str, ...]:
     if "cable output" in text:
         tags.append("vb-cable-recording")
 
+    if "monitor of" in text or ".monitor" in text:
+        tags.append("virtual")
+        tags.append("monitor")
+
+    if "null sink" in text or "virtual sink" in text:
+        tags.append("virtual")
+        tags.append("virtual-sink")
+
+    if "virtual source" in text:
+        tags.append("virtual")
+        tags.append("virtual-source")
+
+    if "loopback" in text:
+        tags.append("virtual")
+
+    if "dpdfnet" in text:
+        tags.append("dpdfnet")
+
     if "microphone" in text or " mic" in text or text.startswith("mic "):
         tags.append("mic")
 
@@ -367,7 +508,15 @@ def _infer_device_tags(name: str) -> tuple[str, ...]:
     if "speaker" in text:
         tags.append("speakers")
 
-    return tuple(tags)
+    # Preserve insertion order while removing duplicates.
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        if tag not in seen:
+            seen.add(tag)
+            deduped.append(tag)
+
+    return tuple(deduped)
 
 
 def _iter_channel_candidates(max_channels: int) -> Iterable[int]:
@@ -459,6 +608,19 @@ def _negotiate_stream_channels(
         f"Could not open {direction} device {device_id} at {samplerate} Hz, dtype={dtype}.\n"
         f"Tried channel counts:\n{failure_text}"
     )
+
+
+def _same_hostapi_guidance() -> str:
+    system = platform.system()
+    if system == "Windows":
+        return "Choose two devices from the same host API, ideally WASAPI on Windows."
+    if system == "Linux":
+        return (
+            "Choose two devices from the same host API, ideally PipeWire if your "
+            "PortAudio build exposes it, otherwise PulseAudio, then JACK, then ALSA "
+            "on Linux/PipeWire."
+        )
+    return "Choose two devices from the same host API."
 
 
 @dataclass(frozen=True)
@@ -585,6 +747,10 @@ def _score_input_probe(probe: DeviceProbe) -> int:
 
     if "mic" in tags:
         score += 40
+    if "monitor" in tags:
+        score -= 50
+    if "dpdfnet" in tags:
+        score -= 30
     if "virtual" in tags:
         score -= 20
     if "vb-cable-recording" in tags or "vb-cable-playback" in tags:
@@ -609,11 +775,22 @@ def _score_output_probe(probe: DeviceProbe) -> int:
 
     if "vb-cable-playback" in tags:
         score += 60
+    if "virtual-sink" in tags:
+        score += 45
+    if "dpdfnet" in tags:
+        score += 40
     if "vb-cable-recording" in tags:
+        score -= 80
+    if "monitor" in tags:
         score -= 80
     if "headphones" in tags or "speakers" in tags:
         score += 10
-    if "virtual" in tags and "vb-cable-playback" not in tags:
+    if (
+        "virtual" in tags
+        and "vb-cable-playback" not in tags
+        and "virtual-sink" not in tags
+        and "dpdfnet" not in tags
+    ):
         score -= 10
     if "primary sound driver" in probe.name.casefold():
         score -= 30
@@ -739,17 +916,19 @@ def _is_likely_physical_mic_input(probe: DeviceProbe) -> bool:
         and probe.open_channels is not None
         and "mic" in tags
         and "virtual" not in tags
+        and "monitor" not in tags
+        and "dpdfnet" not in tags
         and "vb-cable-recording" not in tags
         and "vb-cable-playback" not in tags
     )
 
 
-def _is_likely_vb_cable_playback_output(probe: DeviceProbe) -> bool:
+def _is_likely_virtual_bridge_output(probe: DeviceProbe) -> bool:
     tags = set(probe.tags)
     return (
         probe.direction == "output"
         and probe.open_channels is not None
-        and "vb-cable-playback" in tags
+        and ("vb-cable-playback" in tags or "virtual-sink" in tags or "dpdfnet" in tags)
     )
 
 
@@ -760,7 +939,7 @@ def _suggest_run_pair(
         probe for probe in input_probes if _is_likely_physical_mic_input(probe)
     ]
     likely_outputs = [
-        probe for probe in output_probes if _is_likely_vb_cable_playback_output(probe)
+        probe for probe in output_probes if _is_likely_virtual_bridge_output(probe)
     ]
 
     best_pair: Optional[tuple[DeviceProbe, DeviceProbe]] = None
@@ -852,7 +1031,7 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
             "Input and output devices must use the same host API in Version 0.\n"
             f"Input : id={args.input}, hostapi={input_hostapi}, name={input_info['name']}\n"
             f"Output: id={args.output}, hostapi={output_hostapi}, name={output_info['name']}\n"
-            "Choose two devices from the same host API, ideally WASAPI on Windows."
+            f"{_same_hostapi_guidance()}"
         )
 
     input_channels = _negotiate_stream_channels(
@@ -887,21 +1066,85 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     )
 
 
+def _print_platform_usage_notes(*, samplerate: int) -> None:
+    system = platform.system()
+
+    if system == "Windows":
+        print("Windows usage notes:")
+        print(
+            "  - Prefer choosing input and output devices from the same Host API, ideally WASAPI."
+        )
+        print("  - For VB-CABLE:")
+        print(
+            "      * this script should OUTPUT to the playback endpoint, usually named 'CABLE Input'"
+        )
+        print(
+            "      * your apps should READ from the recording endpoint, usually named 'CABLE Output'"
+        )
+        print(
+            f"  - Probe results above show whether a device can open at {samplerate} Hz."
+        )
+        print("  - Version 0 intentionally has no separate 'validate' command.")
+        print(
+            "    Use 'run' and stop it with Ctrl+C as the quick smoke test after choosing IDs."
+        )
+        print()
+        return
+
+    if system == "Linux":
+        print("Linux PipeWire usage notes:")
+        print("  - This script uses the PortAudio host APIs exposed by sounddevice.")
+        print(
+            "  - On PipeWire systems, prefer a real 'PipeWire' host API if your PortAudio build has one,"
+        )
+        print("    otherwise prefer PulseAudio, then JACK, then ALSA.")
+        print("  - Keep --input and --output on the same host API.")
+        print(
+            "  - To create a simple virtual mic target with PipeWire's PulseAudio compatibility layer:"
+        )
+        print(
+            "      pactl load-module module-null-sink sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic"
+        )
+        print("  - Then set --output to that virtual sink's playback device ID.")
+        print(
+            "  - In apps, choose the matching monitor/source, often 'Monitor of DPDFNet_Mic',"
+        )
+        print("    as the microphone.")
+        print(
+            f"  - Probe results above show whether a device can open at {samplerate} Hz."
+        )
+        print("  - Version 0 intentionally has no separate 'validate' command.")
+        print(
+            "    Use 'run' and stop it with Ctrl+C as the quick smoke test after choosing IDs."
+        )
+        print()
+        return
+
+    print("Platform usage notes:")
+    print(
+        "  - This script is primarily intended for Windows 10/11 and Linux systems running PipeWire."
+    )
+    print(f"  - Probe results above show whether a device can open at {samplerate} Hz.")
+    print()
+    return
+
+
 def list_devices_command(args: argparse.Namespace) -> int:
     sd_mod = _require_sounddevice()
 
     probe_sample_rate = _resolve_stream_sample_rate(
         args.model, args.samplerate, context="device listing"
     )
-    hostapi_filter = _resolve_list_hostapi_filter(args)
 
-    if platform.system() != "Windows":
+    if platform.system() not in ("Windows", "Linux"):
         _eprint(
-            "[note] This script is designed for Windows 10/11, though device listing may still work elsewhere."
+            "[note] This script is primarily intended for Windows 10/11 and Linux PipeWire systems, though device listing may still work elsewhere."
         )
 
     devices = sd_mod.query_devices()
     hostapi_names = _get_hostapi_names(sd_mod)
+    hostapi_filter = _resolve_list_hostapi_filter(args, hostapi_names)
+
     input_probes, output_probes = _build_device_probes(
         devices=devices,
         hostapi_names=hostapi_names,
@@ -929,6 +1172,12 @@ def list_devices_command(args: argparse.Namespace) -> int:
     )
     print()
 
+    if hostapi_filter != "all" and not input_probes and not output_probes:
+        print(
+            f"No devices matched the current Host API filter '{hostapi_filter}'. Try --all-apis."
+        )
+        print()
+
     suggested_pair = _suggest_run_pair(input_probes, output_probes)
     if suggested_pair is not None:
         input_probe, output_probe = suggested_pair
@@ -943,30 +1192,17 @@ def list_devices_command(args: argparse.Namespace) -> int:
         )
         print()
 
-    print("Windows usage notes:")
-    print(
-        "  - Prefer choosing input and output devices from the same Host API, ideally WASAPI."
-    )
-    print("  - For VB-CABLE:")
-    print(
-        "      * this script should OUTPUT to the playback endpoint, usually named 'CABLE Input'"
-    )
-    print(
-        "      * your apps should READ from the recording endpoint, usually named 'CABLE Output'"
-    )
-    print(
-        f"  - Probe results above show whether a device can open at {probe_sample_rate} Hz."
-    )
-    print("  - Version 0 intentionally has no separate 'validate' command.")
-    print(
-        "    Use 'run' and stop it with Ctrl+C as the quick smoke test after choosing IDs."
-    )
-    print()
+    _print_platform_usage_notes(samplerate=probe_sample_rate)
 
     return 0
 
 
 def _print_run_summary(config: RunConfig) -> None:
+    system = platform.system()
+    input_tags = set(config.input_tags)
+    output_tags = set(config.output_tags)
+    input_hostapi_key = _hostapi_filter_key_for_name(config.input_hostapi_name)
+
     print()
     print("Run configuration")
     print("-----------------")
@@ -996,27 +1232,58 @@ def _print_run_summary(config: RunConfig) -> None:
     if config.output_channels > 1:
         print("  - Enhanced mono will be duplicated across all opened output channels.")
     print("  - This script writes enhanced audio to your chosen output device.")
-    print(
-        "  - If that output device is VB-CABLE 'CABLE Input', then your apps should use"
-    )
-    print("    VB-CABLE 'CABLE Output' as the microphone.")
-    if config.input_hostapi_name.casefold() != "windows wasapi":
-        print("  - Windows note: WASAPI is the recommended host API starting point.")
+
+    if system == "Windows":
+        print(
+            "  - If that output device is VB-CABLE 'CABLE Input', then your apps should use"
+        )
+        print("    VB-CABLE 'CABLE Output' as the microphone.")
+        if input_hostapi_key != "wasapi":
+            print(
+                "  - Windows note: WASAPI is the recommended host API starting point."
+            )
+
+    elif system == "Linux":
+        print(
+            "  - On Linux/PipeWire, if that output device is a virtual sink, your apps should use"
+        )
+        print("    the matching monitor/source as the microphone.")
+        print(
+            "  - Linux note: sounddevice reaches PipeWire through PortAudio host APIs,"
+        )
+        print("    usually a real PipeWire backend if available, otherwise PulseAudio,")
+        print("    JACK, or ALSA.")
+        if input_hostapi_key not in {"pipewire", "pulse", "jack", "alsa"}:
+            print(
+                "  - Linux note: a PipeWire-compatible PortAudio host API is recommended if available."
+            )
+        if "virtual-sink" not in output_tags and "dpdfnet" not in output_tags:
+            print(
+                "  - Linux note: for a virtual microphone flow, you usually want --output to be"
+            )
+            print("    a virtual sink rather than speakers/headphones.")
+
     if abs(config.block_ms - 10.0) > 1e-6:
         print(
             "  - 10 ms blocks are the recommended starting point for DPDFNet streaming."
         )
 
-    input_tags = set(config.input_tags)
-    output_tags = set(config.output_tags)
     if "vb-cable-recording" in input_tags or "vb-cable-playback" in input_tags:
         print(
             "  - Warning: selected input looks like a VB-CABLE endpoint, not a physical microphone."
         )
     if "vb-cable-recording" in output_tags:
         print(
-            "  - Warning: selected output looks like a recording endpoint. For VB-CABLE, "
-            "you usually want 'CABLE Input' as --output."
+            "  - Warning: selected output looks like a recording endpoint. For VB-CABLE,"
+            " you usually want 'CABLE Input' as --output."
+        )
+    if "monitor" in input_tags:
+        print(
+            "  - Warning: selected input looks like a monitor/source, not a physical microphone."
+        )
+    if system == "Linux" and "monitor" in output_tags:
+        print(
+            "  - Warning: selected output looks like a monitor/source, not a sink playback device."
         )
     print()
 
@@ -1025,9 +1292,9 @@ def run_command(args: argparse.Namespace) -> int:
     sd_mod = _require_sounddevice()
     dpdfnet_mod = _require_dpdfnet()
 
-    if platform.system() != "Windows":
+    if platform.system() not in ("Windows", "Linux"):
         _eprint(
-            "[note] This script targets Windows 10/11. It may still work elsewhere, but that is not the supported target."
+            "[note] This script is primarily intended for Windows 10/11 and Linux PipeWire systems. It may still work elsewhere, but that is not the supported target."
         )
 
     config = _build_run_config(args)
@@ -1140,8 +1407,10 @@ def run_command(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Command-line DPDFNet microphone bridge for Windows 10/11.\n"
+            "Command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire setups.\n"
             "Use 'list-devices' first, then 'run' with numeric device IDs.\n"
+            "On Linux, PipeWire is reached through the PortAudio host APIs exposed by sounddevice,\n"
+            "usually PipeWire directly if available, otherwise PulseAudio, JACK, or ALSA.\n"
             "Version 0 intentionally has no separate 'validate' subcommand,\n"
             "use 'run' as the quick smoke-test path."
         ),
@@ -1162,10 +1431,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawTextHelpFormatter,
         description=(
-            "List audio devices in a Windows-friendly way.\n"
+            "List audio devices in a platform-friendly way.\n"
             "On Windows, the default view is filtered to WASAPI because that is the\n"
-            "recommended starting point for this bridge. Use --all-apis to show every\n"
-            "PortAudio host API instead."
+            "recommended starting point for this bridge.\n"
+            "On Linux, the default view prefers a PipeWire host API if your PortAudio\n"
+            "build exposes one, otherwise PulseAudio, then JACK, then ALSA.\n"
+            "Use --all-apis to show every PortAudio host API instead."
         ),
     )
     list_parser.add_argument(
@@ -1190,7 +1461,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=LIST_DEVICE_HOSTAPI_CHOICES,
         default=None,
         help=(
-            "Host API filter for listing. On Windows the default is WASAPI.\n"
+            "Host API filter for listing.\n"
+            "Windows default: WASAPI.\n"
+            "Linux default: PipeWire if available, otherwise PulseAudio, JACK, then ALSA.\n"
             "Use --hostapi all or --all-apis to show every PortAudio host API."
         ),
     )
@@ -1217,7 +1490,8 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "Numeric output device ID.\n"
-            "For VB-CABLE this should usually be the playback endpoint named 'CABLE Input'."
+            "Windows with VB-CABLE: usually the playback endpoint named 'CABLE Input'.\n"
+            "Linux/PipeWire: usually a virtual sink playback endpoint."
         ),
     )
     run_parser.add_argument(
