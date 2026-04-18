@@ -36,7 +36,7 @@ Important implementation facts
 
 2) Version 0 intentionally avoids live resampling.
    The stream sample rate MUST equal the model's native sample rate.
-   For the recommended model `dpdfnet2_48khz_hr`, that means 48,000 Hz.
+   For the recommended model `dpdfnet8_48khz_hr`, that means 48,000 Hz.
 
 3) We use a single full-duplex `sounddevice.Stream`.
    Reason:
@@ -50,15 +50,32 @@ Important implementation facts
    callback block, especially during startup or if non-hop-sized blocks are used.
    The FIFO prevents dropped/duplicated audio.
 
-5) Device selection is numeric IDs only in Version 0.
+5) Live device selection remains numeric IDs only in Version 0.
    Reason:
    - avoids fuzzy name matching bugs
    - easier to debug
    - clearer for future scripting / automation
 
+   The CLI may print best-effort hints, tags, or a likely first-run command,
+   but actual device selection remains ID-based.
+
 6) Same-host-API enforcement is deliberate.
    On Windows, mixed host APIs for a duplex stream create avoidable pain.
    The user should choose both devices from the same host API, ideally WASAPI.
+
+7) `list-devices` is optimized for first-run usability on Windows.
+   By default it shows recommended WASAPI candidates, probes whether devices can
+   open at the selected model sample rate, and prints a likely first-run command
+   when the choice looks obvious. Use `--all-apis` to show every PortAudio host
+   API instead.
+
+8) Version 0 deliberately does not add a separate `validate` command.
+   This is a design decision, not an omission by accident.
+   Reason:
+   - keeps the CLI surface small
+   - keeps preflight lightweight
+   - pushes discovery into `list-devices`
+   - uses `run` as the quick smoke test
 
 Recommended first run
 ---------------------
@@ -70,15 +87,18 @@ Recommended first run
 
 4) Download the recommended model once:
 
-       dpdfnet download dpdfnet2_48khz_hr
+       dpdfnet download dpdfnet8_48khz_hr
 
-5) List devices:
+5) List recommended devices:
 
        python mic_bridge.py list-devices
 
-6) Start the bridge, example:
+   By default on Windows, this shows recommended WASAPI candidates for the
+   selected model/sample rate. Use `--all-apis` to show every PortAudio device.
 
-       python mic_bridge.py run --input 5 --output 12 --model dpdfnet2_48khz_hr
+6) Start the bridge:
+
+       python mic_bridge.py run --input 18 --output 16
 
    where:
    - --input  is your real microphone device ID
@@ -96,6 +116,8 @@ Explicit non-goals for Version 0
 - model hot-switching while the stream is open
 - device hotplug recovery
 - background service / Windows startup
+- separate `validate` subcommand
+- timed runs (`--duration` flag was explicitly removed as a design decision)
 - packaging into an .exe
 - native C++ rewrite
 
@@ -128,6 +150,11 @@ facts that should not be rediscovered from scratch:
   layered on top of the same core bridge architecture, not mixed directly into
   the real-time callback.
 
+- If someone later wants a separate `validate` command, treat that as a
+  deliberate CLI design expansion. Version 0 intentionally keeps the workflow to
+  `list-devices` and `run`, with manual Ctrl+C for the smoke-test path.
+  A `--duration` flag was also explicitly removed from `run` to keep the CLI simple.
+
 Backwards compatibility
 -----------------------
 Backwards compatibility is explicitly not a concern for this file.
@@ -137,11 +164,11 @@ Prioritize clarity and correctness over preserving old interfaces.
 from __future__ import annotations
 
 import argparse
-from collections import deque
-from dataclasses import dataclass
 import platform
 import sys
 import time
+from collections import deque
+from dataclasses import dataclass
 from typing import Iterable, Optional
 
 import numpy as np
@@ -166,9 +193,25 @@ MODEL_SAMPLE_RATES: dict[str, int] = {
     "dpdfnet8_48khz_hr": 48000,
 }
 
-DEFAULT_MODEL = "dpdfnet2_48khz_hr"
+DEFAULT_MODEL = "dpdfnet8_48khz_hr"
 DEFAULT_BLOCK_MS = 10.0
-DEFAULT_LATENCY = "low"
+DEFAULT_LATENCY = "high"
+
+LIST_DEVICE_HOSTAPI_CHOICES: tuple[str, ...] = (
+    "wasapi",
+    "mme",
+    "directsound",
+    "wdm-ks",
+    "all",
+)
+
+HOSTAPI_FILTER_DISPLAY_NAMES: dict[str, str] = {
+    "wasapi": "Windows WASAPI",
+    "mme": "MME",
+    "directsound": "Windows DirectSound",
+    "wdm-ks": "Windows WDM-KS",
+    "all": "all PortAudio host APIs",
+}
 
 CALLBACK_STATUS_FLAG_NAMES: tuple[str, ...] = (
     "input_underflow",
@@ -213,6 +256,22 @@ def _model_native_sample_rate(model_name: str) -> int:
         ) from exc
 
 
+def _resolve_stream_sample_rate(
+    model_name: str, samplerate: Optional[int], *, context: str
+) -> int:
+    model_sr = _model_native_sample_rate(model_name)
+    sample_rate = model_sr if samplerate is None else int(samplerate)
+
+    if sample_rate != model_sr:
+        raise ValueError(
+            f"Version 0 does not do live resampling.\n"
+            f"Model '{model_name}' expects {model_sr} Hz, but --samplerate={sample_rate} was requested for {context}.\n"
+            f"Use --samplerate {model_sr} or omit --samplerate."
+        )
+
+    return sample_rate
+
+
 def _format_samplerate(value: float) -> str:
     rounded = int(round(value))
     if abs(value - rounded) < 1e-6:
@@ -220,27 +279,8 @@ def _format_samplerate(value: float) -> str:
     return f"{value:.1f}"
 
 
-def _io_flags_for_device(info: dict) -> str:
-    has_in = int(info["max_input_channels"]) > 0
-    has_out = int(info["max_output_channels"]) > 0
-    if has_in and has_out:
-        return "IO"
-    if has_in:
-        return "I"
-    if has_out:
-        return "O"
-    return "-"
-
-
-def _device_default_marker(
-    device_index: int, default_input: Optional[int], default_output: Optional[int]
-) -> str:
-    markers: list[str] = []
-    if default_input is not None and device_index == default_input:
-        markers.append("IN")
-    if default_output is not None and device_index == default_output:
-        markers.append("OUT")
-    return ",".join(markers) if markers else "-"
+def _format_tags(tags: tuple[str, ...]) -> str:
+    return ", ".join(tags) if tags else "-"
 
 
 def _get_hostapi_names(sd_mod) -> list[str]:
@@ -264,6 +304,72 @@ def _hostapi_name_for_device(info: dict, hostapi_names: list[str]) -> str:
     return f"<unknown:{index}>"
 
 
+def _hostapi_matches_filter(hostapi_name: str, filter_name: str) -> bool:
+    if filter_name == "all":
+        return True
+    expected = HOSTAPI_FILTER_DISPLAY_NAMES[filter_name]
+    return hostapi_name.casefold() == expected.casefold()
+
+
+def _resolve_list_hostapi_filter(args: argparse.Namespace) -> str:
+    if args.all_apis:
+        if args.hostapi not in (None, "all"):
+            raise ValueError("Use either --all-apis or --hostapi, not both.")
+        return "all"
+
+    if args.hostapi is not None:
+        return str(args.hostapi)
+
+    if platform.system() == "Windows":
+        return "wasapi"
+
+    return "all"
+
+
+def _hostapi_preference_score(hostapi_name: str) -> int:
+    normalized = hostapi_name.casefold()
+    if normalized == "windows wasapi":
+        return 100
+    if normalized == "windows wdm-ks":
+        return 80
+    if normalized == "windows directsound":
+        return 40
+    if normalized == "mme":
+        return 20
+    return 0
+
+
+def _infer_device_tags(name: str) -> tuple[str, ...]:
+    text = name.casefold()
+    tags: list[str] = []
+
+    is_vb_audio = (
+        "vb-audio" in text
+        or "vb-cable" in text
+        or "cable input" in text
+        or "cable output" in text
+    )
+    if is_vb_audio:
+        tags.append("virtual")
+
+    if "cable input" in text:
+        tags.append("vb-cable-playback")
+
+    if "cable output" in text:
+        tags.append("vb-cable-recording")
+
+    if "microphone" in text or " mic" in text or text.startswith("mic "):
+        tags.append("mic")
+
+    if "headphone" in text or "headset" in text:
+        tags.append("headphones")
+
+    if "speaker" in text:
+        tags.append("speakers")
+
+    return tuple(tags)
+
+
 def _iter_channel_candidates(max_channels: int) -> Iterable[int]:
     """
     Prefer mono first, then stereo, then native max as a last resort.
@@ -280,6 +386,44 @@ def _iter_channel_candidates(max_channels: int) -> Iterable[int]:
         if 1 <= candidate <= max_channels and candidate not in seen:
             seen.add(candidate)
             yield candidate
+
+
+def _probe_device_channels(
+    *,
+    device_id: int,
+    direction: str,
+    samplerate: int,
+    dtype: str = "float32",
+) -> tuple[Optional[int], tuple[str, ...]]:
+    sd_mod = _require_sounddevice()
+    info = _get_device_info(device_id)
+
+    if direction == "input":
+        max_channels = int(info["max_input_channels"])
+        check = sd_mod.check_input_settings
+    elif direction == "output":
+        max_channels = int(info["max_output_channels"])
+        check = sd_mod.check_output_settings
+    else:
+        raise ValueError(f"Unsupported direction '{direction}'")
+
+    if max_channels < 1:
+        return None, (f"device exposes no {direction} channels",)
+
+    failures: list[str] = []
+    for channels in _iter_channel_candidates(max_channels):
+        try:
+            check(
+                device=device_id,
+                channels=channels,
+                samplerate=samplerate,
+                dtype=dtype,
+            )
+            return channels, tuple()
+        except Exception as exc:
+            failures.append(f"{channels}ch -> {exc}")
+
+    return None, tuple(failures)
 
 
 def _negotiate_stream_channels(
@@ -300,41 +444,34 @@ def _negotiate_stream_channels(
 
     This is more robust than assuming every device likes 1 channel.
     """
-    sd_mod = _require_sounddevice()
-    info = _get_device_info(device_id)
+    channels, failures = _probe_device_channels(
+        device_id=device_id,
+        direction=direction,
+        samplerate=samplerate,
+        dtype=dtype,
+    )
 
-    if direction == "input":
-        max_channels = int(info["max_input_channels"])
-        check = sd_mod.check_input_settings
-    elif direction == "output":
-        max_channels = int(info["max_output_channels"])
-        check = sd_mod.check_output_settings
-    else:
-        raise ValueError(f"Unsupported direction '{direction}'")
-
-    if max_channels < 1:
-        raise RuntimeError(
-            f"Selected {direction} device {device_id} exposes no {direction} channels."
-        )
-
-    failures: list[str] = []
-    for channels in _iter_channel_candidates(max_channels):
-        try:
-            check(
-                device=device_id,
-                channels=channels,
-                samplerate=samplerate,
-                dtype=dtype,
-            )
-            return channels
-        except Exception as exc:
-            failures.append(f"{channels}ch -> {exc}")
+    if channels is not None:
+        return channels
 
     failure_text = "\n".join(f"  - {line}" for line in failures)
     raise RuntimeError(
         f"Could not open {direction} device {device_id} at {samplerate} Hz, dtype={dtype}.\n"
         f"Tried channel counts:\n{failure_text}"
     )
+
+
+@dataclass(frozen=True)
+class DeviceProbe:
+    device_id: int
+    direction: str
+    name: str
+    hostapi_name: str
+    default_samplerate: float
+    max_channels: int
+    open_channels: Optional[int]
+    probe_failures: tuple[str, ...]
+    tags: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -347,10 +484,12 @@ class RunConfig:
     input_device_name: str
     input_hostapi_name: str
     input_channels: int
+    input_tags: tuple[str, ...]
     output_device_id: int
     output_device_name: str
     output_hostapi_name: str
     output_channels: int
+    output_tags: tuple[str, ...]
     latency: str
 
 
@@ -434,6 +573,248 @@ class CallbackStatusCounter:
         return lines
 
 
+def _score_input_probe(probe: DeviceProbe) -> int:
+    if probe.direction != "input":
+        raise ValueError("Input scoring called on non-input probe.")
+
+    if probe.open_channels is None:
+        return -10_000
+
+    tags = set(probe.tags)
+    score = _hostapi_preference_score(probe.hostapi_name)
+
+    if "mic" in tags:
+        score += 40
+    if "virtual" in tags:
+        score -= 20
+    if "vb-cable-recording" in tags or "vb-cable-playback" in tags:
+        score -= 80
+    if probe.max_channels <= 2:
+        score += 5
+    if "primary sound capture driver" in probe.name.casefold():
+        score -= 30
+
+    return score
+
+
+def _score_output_probe(probe: DeviceProbe) -> int:
+    if probe.direction != "output":
+        raise ValueError("Output scoring called on non-output probe.")
+
+    if probe.open_channels is None:
+        return -10_000
+
+    tags = set(probe.tags)
+    score = _hostapi_preference_score(probe.hostapi_name)
+
+    if "vb-cable-playback" in tags:
+        score += 60
+    if "vb-cable-recording" in tags:
+        score -= 80
+    if "headphones" in tags or "speakers" in tags:
+        score += 10
+    if "virtual" in tags and "vb-cable-playback" not in tags:
+        score -= 10
+    if "primary sound driver" in probe.name.casefold():
+        score -= 30
+
+    return score
+
+
+def _probe_sort_key(probe: DeviceProbe) -> tuple[bool, int, int]:
+    if probe.direction == "input":
+        score = _score_input_probe(probe)
+    else:
+        score = _score_output_probe(probe)
+
+    return (probe.open_channels is None, -score, probe.device_id)
+
+
+def _build_device_probes(
+    *,
+    devices,
+    hostapi_names: list[str],
+    hostapi_filter: str,
+    samplerate: int,
+) -> tuple[list[DeviceProbe], list[DeviceProbe]]:
+    input_probes: list[DeviceProbe] = []
+    output_probes: list[DeviceProbe] = []
+
+    for device_id, raw_info in enumerate(devices):
+        info = dict(raw_info)
+        hostapi_name = _hostapi_name_for_device(info, hostapi_names)
+
+        if not _hostapi_matches_filter(hostapi_name, hostapi_filter):
+            continue
+
+        name = str(info["name"])
+        tags = _infer_device_tags(name)
+        default_sr = float(info["default_samplerate"])
+
+        max_in = int(info["max_input_channels"])
+        if max_in > 0:
+            open_channels, failures = _probe_device_channels(
+                device_id=device_id,
+                direction="input",
+                samplerate=samplerate,
+                dtype="float32",
+            )
+            input_probes.append(
+                DeviceProbe(
+                    device_id=device_id,
+                    direction="input",
+                    name=name,
+                    hostapi_name=hostapi_name,
+                    default_samplerate=default_sr,
+                    max_channels=max_in,
+                    open_channels=open_channels,
+                    probe_failures=failures,
+                    tags=tags,
+                )
+            )
+
+        max_out = int(info["max_output_channels"])
+        if max_out > 0:
+            open_channels, failures = _probe_device_channels(
+                device_id=device_id,
+                direction="output",
+                samplerate=samplerate,
+                dtype="float32",
+            )
+            output_probes.append(
+                DeviceProbe(
+                    device_id=device_id,
+                    direction="output",
+                    name=name,
+                    hostapi_name=hostapi_name,
+                    default_samplerate=default_sr,
+                    max_channels=max_out,
+                    open_channels=open_channels,
+                    probe_failures=failures,
+                    tags=tags,
+                )
+            )
+
+    input_probes.sort(key=_probe_sort_key)
+    output_probes.sort(key=_probe_sort_key)
+
+    return input_probes, output_probes
+
+
+def _format_probe_openability(probe: DeviceProbe, samplerate: int) -> str:
+    if probe.open_channels is None:
+        return f"opens@{samplerate}=no"
+    return f"opens@{samplerate}={probe.open_channels}ch"
+
+
+def _print_probe_section(
+    *,
+    title: str,
+    probes: list[DeviceProbe],
+    samplerate: int,
+) -> None:
+    print(title)
+
+    if not probes:
+        print("  (none)")
+        return
+
+    for probe in probes:
+        max_label = "max_in" if probe.direction == "input" else "max_out"
+        print(f"  [{probe.device_id}] {probe.name}")
+        print(
+            "       "
+            f"hostapi={probe.hostapi_name}, "
+            f"{max_label}={probe.max_channels}, "
+            f"default_sr={_format_samplerate(probe.default_samplerate)}, "
+            f"{_format_probe_openability(probe, samplerate)}, "
+            f"tags={_format_tags(probe.tags)}"
+        )
+
+
+def _is_likely_physical_mic_input(probe: DeviceProbe) -> bool:
+    tags = set(probe.tags)
+    return (
+        probe.direction == "input"
+        and probe.open_channels is not None
+        and "mic" in tags
+        and "virtual" not in tags
+        and "vb-cable-recording" not in tags
+        and "vb-cable-playback" not in tags
+    )
+
+
+def _is_likely_vb_cable_playback_output(probe: DeviceProbe) -> bool:
+    tags = set(probe.tags)
+    return (
+        probe.direction == "output"
+        and probe.open_channels is not None
+        and "vb-cable-playback" in tags
+    )
+
+
+def _suggest_run_pair(
+    input_probes: list[DeviceProbe], output_probes: list[DeviceProbe]
+) -> Optional[tuple[DeviceProbe, DeviceProbe]]:
+    likely_inputs = [
+        probe for probe in input_probes if _is_likely_physical_mic_input(probe)
+    ]
+    likely_outputs = [
+        probe for probe in output_probes if _is_likely_vb_cable_playback_output(probe)
+    ]
+
+    best_pair: Optional[tuple[DeviceProbe, DeviceProbe]] = None
+    best_score: Optional[int] = None
+
+    for input_probe in likely_inputs:
+        for output_probe in likely_outputs:
+            if input_probe.hostapi_name != output_probe.hostapi_name:
+                continue
+
+            score = _score_input_probe(input_probe) + _score_output_probe(output_probe)
+            if best_pair is None or best_score is None or score > best_score:
+                best_pair = (input_probe, output_probe)
+                best_score = score
+
+    if best_pair is not None:
+        return best_pair
+
+    viable_inputs = [probe for probe in input_probes if probe.open_channels is not None]
+    viable_outputs = [
+        probe for probe in output_probes if probe.open_channels is not None
+    ]
+
+    if len(viable_inputs) == 1 and len(viable_outputs) == 1:
+        only_input = viable_inputs[0]
+        only_output = viable_outputs[0]
+        if only_input.hostapi_name == only_output.hostapi_name:
+            return only_input, only_output
+
+    return None
+
+
+def _build_run_command_suggestion(
+    *,
+    input_id: int,
+    output_id: int,
+    model_name: str,
+) -> str:
+    parts = [
+        "python",
+        "mic_bridge.py",
+        "run",
+        "--input",
+        str(input_id),
+        "--output",
+        str(output_id),
+    ]
+
+    if model_name != DEFAULT_MODEL:
+        parts.extend(["--model", model_name])
+
+    return " ".join(parts)
+
+
 def _build_run_config(args: argparse.Namespace) -> RunConfig:
     """
     Resolve CLI args into a concrete run configuration.
@@ -448,15 +829,9 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     if args.block_ms <= 0:
         raise ValueError("--block-ms must be > 0.")
 
-    model_sr = _model_native_sample_rate(args.model)
-    sample_rate = model_sr if args.samplerate is None else int(args.samplerate)
-
-    if sample_rate != model_sr:
-        raise ValueError(
-            f"Version 0 does not do live resampling.\n"
-            f"Model '{args.model}' expects {model_sr} Hz, but --samplerate={sample_rate} was requested.\n"
-            f"Use --samplerate {model_sr} or omit --samplerate."
-        )
+    sample_rate = _resolve_stream_sample_rate(
+        args.model, args.samplerate, context="run"
+    )
 
     block_size = int(round(sample_rate * (float(args.block_ms) / 1000.0)))
     if block_size <= 0:
@@ -502,16 +877,23 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
         input_device_name=str(input_info["name"]),
         input_hostapi_name=input_hostapi,
         input_channels=input_channels,
+        input_tags=_infer_device_tags(str(input_info["name"])),
         output_device_id=int(args.output),
         output_device_name=str(output_info["name"]),
         output_hostapi_name=output_hostapi,
         output_channels=output_channels,
+        output_tags=_infer_device_tags(str(output_info["name"])),
         latency=str(args.latency),
     )
 
 
-def list_devices_command(_args: argparse.Namespace) -> int:
+def list_devices_command(args: argparse.Namespace) -> int:
     sd_mod = _require_sounddevice()
+
+    probe_sample_rate = _resolve_stream_sample_rate(
+        args.model, args.samplerate, context="device listing"
+    )
+    hostapi_filter = _resolve_list_hostapi_filter(args)
 
     if platform.system() != "Windows":
         _eprint(
@@ -520,58 +902,46 @@ def list_devices_command(_args: argparse.Namespace) -> int:
 
     devices = sd_mod.query_devices()
     hostapi_names = _get_hostapi_names(sd_mod)
+    input_probes, output_probes = _build_device_probes(
+        devices=devices,
+        hostapi_names=hostapi_names,
+        hostapi_filter=hostapi_filter,
+        samplerate=probe_sample_rate,
+    )
 
-    default_input: Optional[int]
-    default_output: Optional[int]
-    try:
-        default_pair = sd_mod.default.device
-        default_input = None if default_pair[0] in (None, -1) else int(default_pair[0])
-        default_output = None if default_pair[1] in (None, -1) else int(default_pair[1])
-    except Exception:
-        default_input = None
-        default_output = None
+    print()
+    print(f"Recommended devices for model {args.model} @ {probe_sample_rate} Hz")
+    print(f"Host API filter: {HOSTAPI_FILTER_DISPLAY_NAMES[hostapi_filter]}")
+    if hostapi_filter != "all":
+        print("Use --all-apis to show every PortAudio device.")
+    print()
 
-    headers = [
-        "ID",
-        "Default",
-        "I/O",
-        "Host API",
-        "In Ch",
-        "Out Ch",
-        "Default SR",
-        "Name",
-    ]
+    _print_probe_section(
+        title="Input candidates",
+        probes=input_probes,
+        samplerate=probe_sample_rate,
+    )
+    print()
+    _print_probe_section(
+        title="Output candidates",
+        probes=output_probes,
+        samplerate=probe_sample_rate,
+    )
+    print()
 
-    rows: list[list[str]] = []
-    for device_id, info in enumerate(devices):
-        info = dict(info)
-        rows.append(
-            [
-                str(device_id),
-                _device_default_marker(device_id, default_input, default_output),
-                _io_flags_for_device(info),
-                _hostapi_name_for_device(info, hostapi_names),
-                str(int(info["max_input_channels"])),
-                str(int(info["max_output_channels"])),
-                _format_samplerate(float(info["default_samplerate"])),
-                str(info["name"]),
-            ]
+    suggested_pair = _suggest_run_pair(input_probes, output_probes)
+    if suggested_pair is not None:
+        input_probe, output_probe = suggested_pair
+        print("Likely first run:")
+        print(
+            "  "
+            + _build_run_command_suggestion(
+                input_id=input_probe.device_id,
+                output_id=output_probe.device_id,
+                model_name=args.model,
+            )
         )
-
-    col_widths = [
-        max(len(headers[i]), *(len(row[i]) for row in rows))
-        for i in range(len(headers))
-    ]
-
-    def fmt_row(values: list[str]) -> str:
-        return "  ".join(values[i].ljust(col_widths[i]) for i in range(len(values)))
-
-    print()
-    print(fmt_row(headers))
-    print(fmt_row(["-" * width for width in col_widths]))
-    for row in rows:
-        print(fmt_row(row))
-    print()
+        print()
 
     print("Windows usage notes:")
     print(
@@ -584,7 +954,13 @@ def list_devices_command(_args: argparse.Namespace) -> int:
     print(
         "      * your apps should READ from the recording endpoint, usually named 'CABLE Output'"
     )
-    print("  - Start with the 48 kHz model: dpdfnet2_48khz_hr")
+    print(
+        f"  - Probe results above show whether a device can open at {probe_sample_rate} Hz."
+    )
+    print("  - Version 0 intentionally has no separate 'validate' command.")
+    print(
+        "    Use 'run' and stop it with Ctrl+C as the quick smoke test after choosing IDs."
+    )
     print()
 
     return 0
@@ -592,8 +968,8 @@ def list_devices_command(_args: argparse.Namespace) -> int:
 
 def _print_run_summary(config: RunConfig) -> None:
     print()
-    print("Starting DPDFNet microphone bridge")
-    print("---------------------------------")
+    print("Run configuration")
+    print("-----------------")
     print(f"Model                : {config.model_name}")
     print(f"Model/native SR      : {config.sample_rate} Hz")
     print(
@@ -615,17 +991,33 @@ def _print_run_summary(config: RunConfig) -> None:
     print(
         "  - First enhanced output arrives after roughly one full model window (~20 ms)."
     )
+    if config.input_channels > 1:
+        print("  - Opened input will be downmixed to mono before enhancement.")
+    if config.output_channels > 1:
+        print("  - Enhanced mono will be duplicated across all opened output channels.")
     print("  - This script writes enhanced audio to your chosen output device.")
     print(
         "  - If that output device is VB-CABLE 'CABLE Input', then your apps should use"
     )
     print("    VB-CABLE 'CABLE Output' as the microphone.")
+    if config.input_hostapi_name.casefold() != "windows wasapi":
+        print("  - Windows note: WASAPI is the recommended host API starting point.")
     if abs(config.block_ms - 10.0) > 1e-6:
         print(
             "  - 10 ms blocks are the recommended starting point for DPDFNet streaming."
         )
-    print()
-    print("Press Ctrl+C to stop.")
+
+    input_tags = set(config.input_tags)
+    output_tags = set(config.output_tags)
+    if "vb-cable-recording" in input_tags or "vb-cable-playback" in input_tags:
+        print(
+            "  - Warning: selected input looks like a VB-CABLE endpoint, not a physical microphone."
+        )
+    if "vb-cable-recording" in output_tags:
+        print(
+            "  - Warning: selected output looks like a recording endpoint. For VB-CABLE, "
+            "you usually want 'CABLE Input' as --output."
+        )
     print()
 
 
@@ -641,12 +1033,14 @@ def run_command(args: argparse.Namespace) -> int:
     config = _build_run_config(args)
     _print_run_summary(config)
 
-    # Model construction happens once, before the stream opens.
-    # This is where auto-download may happen if the model is not cached yet.
+    print("Preparing DPDFNet model...")
+    model_start = time.perf_counter()
     enhancer = dpdfnet_mod.StreamEnhancer(
         model=config.model_name,
         verbose=bool(args.verbose),
     )
+    model_elapsed = time.perf_counter() - model_start
+    print(f"Model ready in {model_elapsed:.2f} s.")
 
     output_fifo = AudioFifo()
     status_counter = CallbackStatusCounter()
@@ -700,6 +1094,8 @@ def run_command(args: argparse.Namespace) -> int:
             outdata.fill(0.0)
             raise sd_mod.CallbackAbort from exc
 
+    print("Opening duplex audio stream...")
+
     try:
         with sd_mod.Stream(
             samplerate=config.sample_rate,
@@ -710,6 +1106,9 @@ def run_command(args: argparse.Namespace) -> int:
             latency=config.latency,
             callback=audio_callback,
         ):
+            print("Streaming.")
+            print("Press Ctrl+C to stop.")
+            print()
             while True:
                 time.sleep(0.5)
 
@@ -742,16 +1141,63 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Command-line DPDFNet microphone bridge for Windows 10/11.\n"
-            "Use 'list-devices' first, then 'run' with numeric device IDs."
+            "Use 'list-devices' first, then 'run' with numeric device IDs.\n"
+            "Version 0 intentionally has no separate 'validate' subcommand,\n"
+            "use 'run' as the quick smoke-test path."
         ),
         formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python mic_bridge.py list-devices\n"
+            "  python mic_bridge.py run --input 18 --output 16\n"
+        ),
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser(
+    list_parser = subparsers.add_parser(
         "list-devices",
-        help="List audio devices with Windows-friendly host API info.",
+        help=(
+            "List recommended audio devices and probe whether they open at the selected sample rate."
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+        description=(
+            "List audio devices in a Windows-friendly way.\n"
+            "On Windows, the default view is filtered to WASAPI because that is the\n"
+            "recommended starting point for this bridge. Use --all-apis to show every\n"
+            "PortAudio host API instead."
+        ),
+    )
+    list_parser.add_argument(
+        "--model",
+        type=str,
+        choices=sorted(MODEL_SAMPLE_RATES),
+        default=DEFAULT_MODEL,
+        help=f"DPDFNet model whose native sample rate will be probed. Default: {DEFAULT_MODEL}",
+    )
+    list_parser.add_argument(
+        "--samplerate",
+        type=int,
+        default=None,
+        help=(
+            "Probe sample rate in Hz. In Version 0 this must match the model's native "
+            "sample rate exactly. If omitted, the model's native rate is used."
+        ),
+    )
+    list_parser.add_argument(
+        "--hostapi",
+        type=str,
+        choices=LIST_DEVICE_HOSTAPI_CHOICES,
+        default=None,
+        help=(
+            "Host API filter for listing. On Windows the default is WASAPI.\n"
+            "Use --hostapi all or --all-apis to show every PortAudio host API."
+        ),
+    )
+    list_parser.add_argument(
+        "--all-apis",
+        action="store_true",
+        help="Show every PortAudio host API. Equivalent to --hostapi all.",
     )
 
     run_parser = subparsers.add_parser(
