@@ -15,8 +15,10 @@ Windows:
     chat/game/OBS app -> VB-CABLE recording endpoint ("CABLE Output")
 
 Linux with PipeWire:
-    physical mic -> this script -> PipeWire virtual sink playback endpoint
-    chat/game/OBS app -> matching monitor/source endpoint
+    physical mic -> this script -> PipeWire virtual mic target created via
+    `module-null-sink`
+    chat/game/OBS app -> that same virtual mic target, often directly as
+    "DPDFNet_Mic", or in some app stacks via its matching monitor/source
 
 Supported target environments
 -----------------------------
@@ -70,7 +72,7 @@ Important implementation facts
    create avoidable pain.
    The user should choose both devices from the same host API.
    - Windows: ideally WASAPI
-   - Linux/PipeWire: ideally a real PipeWire PortAudio backend if present,
+   - Linux: ideally a real PipeWire PortAudio backend if present,
      otherwise PulseAudio, then JACK, then ALSA
 
 7) `list-devices` is optimized for first-run usability on Windows and Linux.
@@ -97,6 +99,34 @@ Important implementation facts
    - keeps preflight lightweight
    - pushes discovery into `list-devices`
    - uses `run` as the quick smoke test
+
+10) On Linux/JACK, the default block sizing is intentionally *not* raw 10.0 ms
+    when `--block-ms` is omitted.
+    Reason:
+    - a plain 10.0 ms block at 48 kHz is 480 frames
+    - Python + PortAudio + JACK often behaves better with exact JACK-friendly
+      frame counts
+    - at 48 kHz, the auto-selected Linux/JACK default becomes 1024 frames,
+      which is 21.333 ms
+    This change exists because the 10.0 ms / 480-frame default can audibly
+    stutter on real systems even when the rest of the pipeline is correct.
+
+11) Output channel negotiation intentionally prefers stereo before mono.
+    Reason:
+    - the bridge output is always enhanced mono
+    - when we open a stereo-ish sink as 2 channels, we can safely duplicate the
+      mono signal into both channels
+    - opening some Linux virtual outputs as 1 channel can map audio to left-only
+    This preference is for *output* only. Input negotiation still prefers mono.
+
+12) The recommended Linux virtual mic target creation command intentionally uses
+    `media.class=Audio/Source/Virtual` plus a mono channel layout.
+    Reason:
+    - many apps, including OBS on some PipeWire desktops, discover that target
+      more naturally as a microphone-like source
+    - forcing the target to mono avoids left/right mapping surprises
+    - the bridge still writes to it as an output device from PortAudio's point
+      of view, which is a little counterintuitive but works well in practice
 
 Recommended first run on Windows
 --------------------------------
@@ -131,10 +161,16 @@ Recommended first run on Windows
 
 Recommended first run on Linux/PipeWire
 ---------------------------------------
-1) Create a virtual sink.
-   If PipeWire's PulseAudio compatibility layer is available, one easy option is:
+1) Create a virtual mic target.
+   The recommended command is:
 
-       pactl load-module module-null-sink sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic
+       pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
+
+   Why this exact form:
+   - `media.class=Audio/Source/Virtual` helps many apps expose it more like a
+     microphone
+   - `channels=1 channel_map=mono` keeps it explicitly mono, which is ideal for
+     speech and avoids left-only surprises
 
 2) Install dependencies:
 
@@ -158,11 +194,16 @@ Recommended first run on Linux/PipeWire
 
    where:
    - --input  is your real microphone device ID
-   - --output is the virtual sink playback endpoint device ID
+   - --output is the virtual mic target's playback/output device ID
+
+   If the selected host API ends up being JACK and you omit `--block-ms`,
+   Version 0 auto-selects a JACK-friendly exact block size. For 48 kHz models
+   that is typically 21.333 ms, which has proven more robust than raw 10.0 ms.
 
 6) In Discord / OBS / your app:
-   choose the matching monitor/source, often something like
-   "Monitor of DPDFNet_Mic", as the microphone.
+   first try choosing `DPDFNet_Mic` directly as the microphone.
+   If a given app does not expose it directly, try the matching monitor/source
+   instead.
 
 Explicit non-goals for Version 0
 --------------------------------
@@ -212,6 +253,26 @@ facts that should not be rediscovered from scratch:
   creation, metadata control, or link management, that is a separate feature
   set and likely a separate integration surface.
 
+- The Linux virtual mic target recommendation uses a specific compatibility trick:
+  `pactl load-module module-null-sink media.class=Audio/Source/Virtual ...`
+  This is not an arbitrary shell one-liner. It exists because it improved
+  discoverability in apps like OBS during real testing.
+
+- The `channels=1 channel_map=mono` part of that Linux command is also
+  deliberate. It matches speech use well and avoids confusing left/right mapping
+  behavior in some application stacks.
+
+- Output channel probing deliberately prefers 2 channels before 1.
+  Do not "simplify" that back to mono-first.
+  Mono-first is still correct for *input*, but for *output* it can cause
+  left-only playback on some Linux virtual devices and sinks.
+
+- Linux/JACK default block sizing is deliberately auto-adjusted when
+  `--block-ms` is omitted.
+  At 48 kHz the auto choice is 1024 frames = 21.333 ms.
+  This was added after real-world stutter reports with the nominal 10.0 ms
+  / 480-frame setting. Do not remove that behavior casually.
+
 - If someone later wants a separate `validate` command, treat that as a
   deliberate CLI design expansion. Version 0 intentionally keeps the workflow to
   `list-devices` and `run`, with manual Ctrl+C for the smoke-test path.
@@ -226,6 +287,7 @@ Prioritize clarity and correctness over preserving old interfaces.
 from __future__ import annotations
 
 import argparse
+import math
 import platform
 import sys
 import time
@@ -258,6 +320,14 @@ MODEL_SAMPLE_RATES: dict[str, int] = {
 DEFAULT_MODEL = "dpdfnet8_48khz_hr"
 DEFAULT_BLOCK_MS = 10.0
 DEFAULT_LATENCY = "high"
+
+LINUX_VIRTUAL_MIC_SINK_NAME = "dpdfnet_mic"
+LINUX_VIRTUAL_MIC_DESCRIPTION = "DPDFNet_Mic"
+# On Linux/JACK, Python + PortAudio tends to behave more reliably when we give
+# it a somewhat roomier exact block size instead of raw 10.0 ms.
+LINUX_JACK_AUTO_MIN_BLOCK_MS = 20.0
+LINUX_JACK_AUTO_MIN_BLOCK_FRAMES = 512
+JACK_BLOCK_HINT_FRAMES: tuple[int, ...] = (256, 512, 1024)
 
 LIST_DEVICE_HOSTAPI_CHOICES: tuple[str, ...] = (
     "pipewire",
@@ -519,7 +589,7 @@ def _infer_device_tags(name: str) -> tuple[str, ...]:
     return tuple(deduped)
 
 
-def _iter_channel_candidates(max_channels: int) -> Iterable[int]:
+def _iter_input_channel_candidates(max_channels: int) -> Iterable[int]:
     """
     Prefer mono first, then stereo, then native max as a last resort.
 
@@ -527,11 +597,27 @@ def _iter_channel_candidates(max_channels: int) -> Iterable[int]:
     - mono is ideal for a speech denoiser
     - stereo often works if mono-open fails on quirky devices
     - max-channels is a final fallback for devices with odd constraints
-
-    We keep the candidate set tiny on purpose.
     """
     seen: set[int] = set()
     for candidate in (1, 2, max_channels):
+        if 1 <= candidate <= max_channels and candidate not in seen:
+            seen.add(candidate)
+            yield candidate
+
+
+def _iter_output_channel_candidates(max_channels: int) -> Iterable[int]:
+    """
+    Prefer stereo first, then mono, then native max as a last resort.
+
+    Why:
+    - the bridge output is enhanced mono
+    - if we open 2 output channels, we duplicate mono into both channels
+    - opening a stereo-ish sink as 1 channel can map to left-only on some
+      Linux virtual devices and sinks
+    - max-channels is still a fallback for odd devices
+    """
+    seen: set[int] = set()
+    for candidate in (2, 1, max_channels):
         if 1 <= candidate <= max_channels and candidate not in seen:
             seen.add(candidate)
             yield candidate
@@ -550,9 +636,11 @@ def _probe_device_channels(
     if direction == "input":
         max_channels = int(info["max_input_channels"])
         check = sd_mod.check_input_settings
+        channel_candidates = _iter_input_channel_candidates(max_channels)
     elif direction == "output":
         max_channels = int(info["max_output_channels"])
         check = sd_mod.check_output_settings
+        channel_candidates = _iter_output_channel_candidates(max_channels)
     else:
         raise ValueError(f"Unsupported direction '{direction}'")
 
@@ -560,7 +648,7 @@ def _probe_device_channels(
         return None, (f"device exposes no {direction} channels",)
 
     failures: list[str] = []
-    for channels in _iter_channel_candidates(max_channels):
+    for channels in channel_candidates:
         try:
             check(
                 device=device_id,
@@ -586,12 +674,15 @@ def _negotiate_stream_channels(
     Pick a channel count that the selected device can open.
 
     For input:
-    - we will downmix all opened channels to mono before enhancement
+    - we prefer mono, then stereo, then native max
+    - any opened input will be downmixed to mono before enhancement
 
     For output:
-    - we will duplicate the enhanced mono signal across all opened channels
+    - we prefer stereo, then mono, then native max
+    - enhanced mono will be duplicated across every opened output channel
 
-    This is more robust than assuming every device likes 1 channel.
+    The input/output preference split is deliberate. Mono is ideal for capture,
+    but mono-open on some output devices can produce left-only audio.
     """
     channels, failures = _probe_device_channels(
         device_id=device_id,
@@ -623,6 +714,107 @@ def _same_hostapi_guidance() -> str:
     return "Choose two devices from the same host API."
 
 
+def _linux_virtual_mic_command() -> str:
+    """
+    Return the recommended PipeWire/PulseAudio compatibility command used in the
+    Linux docs and usage notes.
+
+    This is intentionally very specific:
+    - `media.class=Audio/Source/Virtual` improves discoverability in apps
+    - `channels=1 channel_map=mono` keeps the target explicitly mono
+    """
+    return (
+        "pactl load-module module-null-sink "
+        "media.class=Audio/Source/Virtual "
+        f"sink_name={LINUX_VIRTUAL_MIC_SINK_NAME} "
+        f"sink_properties=device.description={LINUX_VIRTUAL_MIC_DESCRIPTION} "
+        "channels=1 channel_map=mono"
+    )
+
+
+def _next_power_of_two(value: int) -> int:
+    if value <= 1:
+        return 1
+    return 1 << (value - 1).bit_length()
+
+
+def _is_power_of_two(value: int) -> bool:
+    return value > 0 and (value & (value - 1)) == 0
+
+
+def _jack_block_ms_for_frames(frames: int, sample_rate: int) -> float:
+    return (float(frames) * 1000.0) / float(sample_rate)
+
+
+def _format_jack_block_ms_hints(sample_rate: int) -> str:
+    return ", ".join(
+        f"{_jack_block_ms_for_frames(frames, sample_rate):.3f}"
+        for frames in JACK_BLOCK_HINT_FRAMES
+    )
+
+
+def _recommended_linux_jack_block_frames(sample_rate: int) -> int:
+    """
+    Choose a forgiving exact block size for Linux/JACK when the user did not
+    explicitly request one.
+
+    Why not raw 10.0 ms?
+    - at 48 kHz, 10.0 ms is 480 frames, which is not a typical JACK-friendly
+      exact frame count
+    - Python + PortAudio often behaves better with exact frame counts here
+    - using a roomier default reduces real-world stutter/crackle reports
+
+    Current rule:
+    - at least ~20 ms worth of audio
+    - at least 512 frames
+    - rounded up to the next power of two
+    """
+    target_frames = max(
+        int(math.ceil(sample_rate * (LINUX_JACK_AUTO_MIN_BLOCK_MS / 1000.0))),
+        LINUX_JACK_AUTO_MIN_BLOCK_FRAMES,
+    )
+    return _next_power_of_two(target_frames)
+
+
+def _resolve_effective_block_size(
+    *,
+    sample_rate: int,
+    requested_block_ms: Optional[float],
+    hostapi_name: str,
+) -> tuple[int, float, str]:
+    """
+    Resolve the stream block size to an exact frame count.
+
+    Returns:
+        (block_size_frames, effective_block_ms, policy_name)
+
+    Policy names:
+    - explicit
+    - default-10ms
+    - auto-linux-jack
+    """
+    if requested_block_ms is not None:
+        if requested_block_ms <= 0:
+            raise ValueError("--block-ms must be > 0.")
+        block_size = int(round(sample_rate * (requested_block_ms / 1000.0)))
+        if block_size <= 0:
+            raise ValueError(
+                f"--block-ms={requested_block_ms} produced invalid block_size={block_size}."
+            )
+        effective_ms = _jack_block_ms_for_frames(block_size, sample_rate)
+        return block_size, effective_ms, "explicit"
+
+    hostapi_key = _hostapi_filter_key_for_name(hostapi_name)
+    if platform.system() == "Linux" and hostapi_key == "jack":
+        block_size = _recommended_linux_jack_block_frames(sample_rate)
+        effective_ms = _jack_block_ms_for_frames(block_size, sample_rate)
+        return block_size, effective_ms, "auto-linux-jack"
+
+    block_size = int(round(sample_rate * (DEFAULT_BLOCK_MS / 1000.0)))
+    effective_ms = _jack_block_ms_for_frames(block_size, sample_rate)
+    return block_size, effective_ms, "default-10ms"
+
+
 @dataclass(frozen=True)
 class DeviceProbe:
     device_id: int
@@ -641,6 +833,8 @@ class RunConfig:
     model_name: str
     sample_rate: int
     block_ms: float
+    requested_block_ms: Optional[float]
+    block_policy: str
     block_size: int
     input_device_id: int
     input_device_name: str
@@ -1001,22 +1195,15 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     Version 0 rules enforced here:
     - stream sample rate must equal model native sample rate
     - input and output devices must belong to the same host API
-    - channel counts are negotiated conservatively
+    - channel counts are negotiated conservatively, but input/output use
+      different preference orders for practical reasons
+    - Linux/JACK block sizing auto-adjusts when `--block-ms` is omitted
     """
     sd_mod = _require_sounddevice()
-
-    if args.block_ms <= 0:
-        raise ValueError("--block-ms must be > 0.")
 
     sample_rate = _resolve_stream_sample_rate(
         args.model, args.samplerate, context="run"
     )
-
-    block_size = int(round(sample_rate * (float(args.block_ms) / 1000.0)))
-    if block_size <= 0:
-        raise ValueError(
-            f"--block-ms={args.block_ms} produced invalid block_size={block_size}."
-        )
 
     hostapi_names = _get_hostapi_names(sd_mod)
 
@@ -1034,6 +1221,13 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
             f"{_same_hostapi_guidance()}"
         )
 
+    requested_block_ms = None if args.block_ms is None else float(args.block_ms)
+    block_size, effective_block_ms, block_policy = _resolve_effective_block_size(
+        sample_rate=sample_rate,
+        requested_block_ms=requested_block_ms,
+        hostapi_name=input_hostapi,
+    )
+
     input_channels = _negotiate_stream_channels(
         device_id=args.input,
         direction="input",
@@ -1050,7 +1244,9 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     return RunConfig(
         model_name=args.model,
         sample_rate=sample_rate,
-        block_ms=float(args.block_ms),
+        block_ms=effective_block_ms,
+        requested_block_ms=requested_block_ms,
+        block_policy=block_policy,
         block_size=block_size,
         input_device_id=int(args.input),
         input_device_name=str(input_info["name"]),
@@ -1066,7 +1262,7 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     )
 
 
-def _print_platform_usage_notes(*, samplerate: int) -> None:
+def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None:
     system = platform.system()
 
     if system == "Windows":
@@ -1099,20 +1295,44 @@ def _print_platform_usage_notes(*, samplerate: int) -> None:
         )
         print("    otherwise prefer PulseAudio, then JACK, then ALSA.")
         print("  - Keep --input and --output on the same host API.")
+        print("  - Recommended virtual mic target command:")
+        print(f"      {_linux_virtual_mic_command()}")
+        print("  - Why this form:")
         print(
-            "  - To create a simple virtual mic target with PipeWire's PulseAudio compatibility layer:"
+            "      * `media.class=Audio/Source/Virtual` makes many apps expose it more like a mic"
         )
         print(
-            "      pactl load-module module-null-sink sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic"
+            "      * `channels=1 channel_map=mono` keeps it explicitly mono and avoids left/right surprises"
         )
-        print("  - Then set --output to that virtual sink's playback device ID.")
         print(
-            "  - In apps, choose the matching monitor/source, often 'Monitor of DPDFNet_Mic',"
+            "      * the bridge still writes to it as an output/playback device, despite the mic-like naming"
         )
-        print("    as the microphone.")
         print(
             f"  - Probe results above show whether a device can open at {samplerate} Hz."
         )
+        print(
+            f"  - In apps, first try choosing '{LINUX_VIRTUAL_MIC_DESCRIPTION}' directly as the microphone."
+        )
+        print(
+            "    If a given app does not expose it directly, try the matching monitor/source instead."
+        )
+        if hostapi_filter == "jack":
+            auto_frames = _recommended_linux_jack_block_frames(samplerate)
+            auto_ms = _jack_block_ms_for_frames(auto_frames, samplerate)
+            print("  - Your current device view is using JACK.")
+            print(
+                "  - On Linux/JACK, if you omit --block-ms, 'run' auto-selects an exact JACK-friendly"
+            )
+            print(
+                f"    block size, typically {auto_ms:.3f} ms ({auto_frames} frames) at {samplerate} Hz."
+            )
+            print(
+                "    This avoids a common glitch case where raw 10.0 ms becomes a non-exact frame count."
+            )
+            print(
+                f"  - If you override --block-ms on JACK and hear crackle/stutter, try exact values such as:"
+            )
+            print(f"      {_format_jack_block_ms_hints(samplerate)} ms")
         print("  - Version 0 intentionally has no separate 'validate' command.")
         print(
             "    Use 'run' and stop it with Ctrl+C as the quick smoke test after choosing IDs."
@@ -1190,9 +1410,18 @@ def list_devices_command(args: argparse.Namespace) -> int:
                 model_name=args.model,
             )
         )
+        if platform.system() == "Linux" and hostapi_filter == "jack":
+            auto_frames = _recommended_linux_jack_block_frames(probe_sample_rate)
+            auto_ms = _jack_block_ms_for_frames(auto_frames, probe_sample_rate)
+            print(
+                f"  (On Linux/JACK, omitting --block-ms auto-selects {auto_ms:.3f} ms / {auto_frames} frames.)"
+            )
         print()
 
-    _print_platform_usage_notes(samplerate=probe_sample_rate)
+    _print_platform_usage_notes(
+        samplerate=probe_sample_rate,
+        hostapi_filter=hostapi_filter,
+    )
 
     return 0
 
@@ -1208,9 +1437,27 @@ def _print_run_summary(config: RunConfig) -> None:
     print("-----------------")
     print(f"Model                : {config.model_name}")
     print(f"Model/native SR      : {config.sample_rate} Hz")
-    print(
-        f"Block size           : {config.block_size} samples ({config.block_ms:.3f} ms requested)"
-    )
+
+    if config.block_policy == "explicit":
+        print(
+            "Block size           : "
+            f"{config.block_size} samples "
+            f"({config.block_ms:.3f} ms effective, "
+            f"{config.requested_block_ms:.3f} ms requested)"
+        )
+    elif config.block_policy == "auto-linux-jack":
+        print(
+            "Block size           : "
+            f"{config.block_size} samples "
+            f"({config.block_ms:.3f} ms auto-selected for Linux/JACK)"
+        )
+    else:
+        print(
+            "Block size           : "
+            f"{config.block_size} samples "
+            f"({config.block_ms:.3f} ms default)"
+        )
+
     print(f"Latency hint         : {config.latency}")
     print(
         f"Input device         : [{config.input_device_id}] {config.input_device_name}"
@@ -1231,6 +1478,9 @@ def _print_run_summary(config: RunConfig) -> None:
         print("  - Opened input will be downmixed to mono before enhancement.")
     if config.output_channels > 1:
         print("  - Enhanced mono will be duplicated across all opened output channels.")
+    else:
+        print("  - Enhanced mono will be written to a single opened output channel.")
+
     print("  - This script writes enhanced audio to your chosen output device.")
 
     if system == "Windows":
@@ -1245,9 +1495,12 @@ def _print_run_summary(config: RunConfig) -> None:
 
     elif system == "Linux":
         print(
-            "  - On Linux/PipeWire, if that output device is a virtual sink, your apps should use"
+            "  - On Linux/PipeWire, if that output device is your virtual mic target,"
         )
-        print("    the matching monitor/source as the microphone.")
+        print("    apps should first try selecting it directly as the microphone.")
+        print(
+            "  - If a given app does not list it directly, try the matching monitor/source."
+        )
         print(
             "  - Linux note: sounddevice reaches PipeWire through PortAudio host APIs,"
         )
@@ -1261,11 +1514,38 @@ def _print_run_summary(config: RunConfig) -> None:
             print(
                 "  - Linux note: for a virtual microphone flow, you usually want --output to be"
             )
-            print("    a virtual sink rather than speakers/headphones.")
+            print("    a virtual mic target rather than speakers/headphones.")
 
-    if abs(config.block_ms - 10.0) > 1e-6:
+        if "dpdfnet" in output_tags and config.output_channels == 1:
+            print(
+                "  - Linux note: a mono virtual mic target is fine here and avoids left/right routing surprises."
+            )
+
+        if input_hostapi_key == "jack":
+            auto_frames = _recommended_linux_jack_block_frames(config.sample_rate)
+            auto_ms = _jack_block_ms_for_frames(auto_frames, config.sample_rate)
+            if config.block_policy == "auto-linux-jack":
+                print(
+                    "  - Linux/JACK note: because --block-ms was omitted, the script auto-selected"
+                )
+                print(
+                    f"    {config.block_ms:.3f} ms ({config.block_size} frames), an exact JACK-friendly block size."
+                )
+            elif not _is_power_of_two(config.block_size):
+                print(
+                    "  - Linux/JACK note: this block size is not an exact power-of-two frame count."
+                )
+                print(f"    If you hear stutter/crackle, try --block-ms {auto_ms:.3f}")
+                print(
+                    f"    or another exact JACK-friendly value such as {_format_jack_block_ms_hints(config.sample_rate)} ms."
+                )
+
+    if (
+        config.block_policy == "default-10ms"
+        and abs(config.block_ms - DEFAULT_BLOCK_MS) > 1e-6
+    ):
         print(
-            "  - 10 ms blocks are the recommended starting point for DPDFNet streaming."
+            "  - Note: block size is rounded to whole frames, so the effective block duration may differ slightly."
         )
 
     if "vb-cable-recording" in input_tags or "vb-cable-playback" in input_tags:
@@ -1411,6 +1691,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Use 'list-devices' first, then 'run' with numeric device IDs.\n"
             "On Linux, PipeWire is reached through the PortAudio host APIs exposed by sounddevice,\n"
             "usually PipeWire directly if available, otherwise PulseAudio, JACK, or ALSA.\n"
+            "For Linux/PipeWire virtual mic targets, the recommended creation command is:\n"
+            f"  {_linux_virtual_mic_command()}\n"
             "Version 0 intentionally has no separate 'validate' subcommand,\n"
             "use 'run' as the quick smoke-test path."
         ),
@@ -1491,7 +1773,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Numeric output device ID.\n"
             "Windows with VB-CABLE: usually the playback endpoint named 'CABLE Input'.\n"
-            "Linux/PipeWire: usually a virtual sink playback endpoint."
+            "Linux/PipeWire: usually the virtual mic target created with:\n"
+            f"  {_linux_virtual_mic_command()}\n"
         ),
     )
     run_parser.add_argument(
@@ -1513,10 +1796,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--block-ms",
         type=float,
-        default=DEFAULT_BLOCK_MS,
+        default=None,
         help=(
-            "Callback block size in milliseconds. Default: 10.0\n"
-            "10 ms is the recommended first setting."
+            "Callback block size in milliseconds.\n"
+            "If omitted, the default is backend-aware:\n"
+            "  - Linux/JACK: auto-select an exact JACK-friendly block size,\n"
+            "    typically 21.333 ms at 48 kHz\n"
+            "  - other backends: 10.0 ms\n"
+            "If you override this on Linux/JACK and hear crackle/stutter,\n"
+            "prefer exact values such as 10.667 or 21.333 ms at 48 kHz."
         ),
     )
     run_parser.add_argument(
