@@ -232,7 +232,9 @@ def _io_flags_for_device(info: dict) -> str:
     return "-"
 
 
-def _device_default_marker(device_index: int, default_input: Optional[int], default_output: Optional[int]) -> str:
+def _device_default_marker(
+    device_index: int, default_input: Optional[int], default_output: Optional[int]
+) -> str:
     markers: list[str] = []
     if default_input is not None and device_index == default_input:
         markers.append("IN")
@@ -392,7 +394,7 @@ class AudioFifo:
         while write_pos < count and self._chunks:
             chunk = self._chunks[0]
             take = min(count - write_pos, int(chunk.size))
-            out[write_pos:write_pos + take] = chunk[:take]
+            out[write_pos : write_pos + take] = chunk[:take]
 
             if take == chunk.size:
                 self._chunks.popleft()
@@ -572,10 +574,16 @@ def list_devices_command(_args: argparse.Namespace) -> int:
     print()
 
     print("Windows usage notes:")
-    print("  - Prefer choosing input and output devices from the same Host API, ideally WASAPI.")
+    print(
+        "  - Prefer choosing input and output devices from the same Host API, ideally WASAPI."
+    )
     print("  - For VB-CABLE:")
-    print("      * this script should OUTPUT to the playback endpoint, usually named 'CABLE Input'")
-    print("      * your apps should READ from the recording endpoint, usually named 'CABLE Output'")
+    print(
+        "      * this script should OUTPUT to the playback endpoint, usually named 'CABLE Input'"
+    )
+    print(
+        "      * your apps should READ from the recording endpoint, usually named 'CABLE Output'"
+    )
     print("  - Start with the 48 kHz model: dpdfnet2_48khz_hr")
     print()
 
@@ -588,22 +596,34 @@ def _print_run_summary(config: RunConfig) -> None:
     print("---------------------------------")
     print(f"Model                : {config.model_name}")
     print(f"Model/native SR      : {config.sample_rate} Hz")
-    print(f"Block size           : {config.block_size} samples ({config.block_ms:.3f} ms requested)")
+    print(
+        f"Block size           : {config.block_size} samples ({config.block_ms:.3f} ms requested)"
+    )
     print(f"Latency hint         : {config.latency}")
-    print(f"Input device         : [{config.input_device_id}] {config.input_device_name}")
+    print(
+        f"Input device         : [{config.input_device_id}] {config.input_device_name}"
+    )
     print(f"Input host API       : {config.input_hostapi_name}")
     print(f"Input channels open  : {config.input_channels}")
-    print(f"Output device        : [{config.output_device_id}] {config.output_device_name}")
+    print(
+        f"Output device        : [{config.output_device_id}] {config.output_device_name}"
+    )
     print(f"Output host API      : {config.output_hostapi_name}")
     print(f"Output channels open : {config.output_channels}")
     print()
     print("Notes:")
-    print("  - First enhanced output arrives after roughly one full model window (~20 ms).")
+    print(
+        "  - First enhanced output arrives after roughly one full model window (~20 ms)."
+    )
     print("  - This script writes enhanced audio to your chosen output device.")
-    print("  - If that output device is VB-CABLE 'CABLE Input', then your apps should use")
+    print(
+        "  - If that output device is VB-CABLE 'CABLE Input', then your apps should use"
+    )
     print("    VB-CABLE 'CABLE Output' as the microphone.")
     if abs(config.block_ms - 10.0) > 1e-6:
-        print("  - 10 ms blocks are the recommended starting point for DPDFNet streaming.")
+        print(
+            "  - 10 ms blocks are the recommended starting point for DPDFNet streaming."
+        )
     print()
     print("Press Ctrl+C to stop.")
     print()
@@ -656,7 +676,9 @@ def run_command(args: argparse.Namespace) -> int:
             status_counter.observe(status)
 
             if indata.ndim != 2:
-                raise RuntimeError(f"Expected 2D input buffer, got shape {indata.shape}")
+                raise RuntimeError(
+                    f"Expected 2D input buffer, got shape {indata.shape}"
+                )
 
             if indata.shape[1] == 1:
                 mono_in = np.asarray(indata[:, 0], dtype=np.float32)
@@ -699,9 +721,7 @@ def run_command(args: argparse.Namespace) -> int:
             raise RuntimeError(
                 "The audio callback aborted due to an internal error."
             ) from fatal_callback_errors[0]
-        raise RuntimeError(
-            f"Failed to open or run the audio stream: {exc}"
-        ) from exc
+        raise RuntimeError(f"Failed to open or run the audio stream: {exc}") from exc
 
     nonzero_status_lines = status_counter.nonzero_lines()
     if nonzero_status_lines:
