@@ -1143,10 +1143,6 @@ def _run_command_impl(
         ):
             print("Streaming.")
             print("Press Ctrl+C to stop.")
-            print(
-                "If you stop during setup work such as model download, the app exits cleanly"
-            )
-            print("and will hand off if any manual follow-up is needed.")
             print()
             while True:
                 time.sleep(0.5)
