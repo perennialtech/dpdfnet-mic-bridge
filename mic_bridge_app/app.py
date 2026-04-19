@@ -23,6 +23,18 @@ def eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
 
 
+def _print_exception_message(exc: BaseException) -> None:
+    text = str(exc).strip("\n")
+    if not text:
+        eprint("Error.")
+        return
+
+    lines = text.splitlines()
+    eprint(f"Error: {lines[0]}")
+    for line in lines[1:]:
+        eprint(line)
+
+
 def _normalize_argv(argv: Optional[list[str]]) -> list[str]:
     raw_args = list(sys.argv[1:] if argv is None else argv)
 
@@ -38,16 +50,22 @@ def _normalize_argv(argv: Optional[list[str]]) -> list[str]:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(_normalize_argv(argv))
 
     try:
+        args = parser.parse_args(_normalize_argv(argv))
+
         if args.command == "list-devices":
             return list_devices_command(args)
         if args.command == "run":
             return run_command(args)
+    except KeyboardInterrupt:
+        eprint()
+        eprint("Interrupted.")
+        eprint()
+        return 130
     except Exception as exc:
         eprint()
-        eprint(f"Error: {exc}")
+        _print_exception_message(exc)
         eprint()
         return 2
 

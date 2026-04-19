@@ -69,6 +69,7 @@ mic_bridge_app/modeling.py
 
 mic_bridge_app/audio_system.py
     PortAudio and sounddevice behavior:
+    - audio inventory querying and concise enumeration-failure handoffs
     - host API normalization and filtering
     - host API preference scoring
     - device tags
@@ -93,6 +94,7 @@ mic_bridge_app/runtime.py
     - load StreamEnhancer
     - do a one-shot automatic model download when the model looks missing
     - open the duplex stream
+    - keep interrupted/failed-run handoffs concise around persistent Linux target state
     - run the callback
     - print shutdown status summary
 ```
@@ -210,6 +212,16 @@ Important consequences:
 
 Manual numeric IDs remain the explicit fallback.
 
+### Interrupted and failed runs should hand off cleanly
+
+Version 0 is intentionally strict about cleanup and handoffs:
+
+- Ctrl+C during setup should exit cleanly without a traceback dump
+- failed stream opens should stop with a short, actionable handoff
+- repeated runs should not rely on hidden background state repair
+- if a Linux virtual mic target was created, later runs should either reuse it or explain clearly why PortAudio still cannot use it
+- do not add retry loops, auto-healing daemons, or broad cleanup logic just to hide environment problems
+
 ### Manual IDs remain numeric
 
 Version 0 still uses numeric IDs for the explicit path.
@@ -232,9 +244,15 @@ Keep that behavior fail-fast and concise:
 
 - one attempt
 - short user-facing message
+- duplicate-aware behavior, if the recommended target already exists but PortAudio still cannot use it, hand off instead of trying to stack another copy
 - no retry loop
 - no background daemon behavior
 - no graph-management ambitions
+
+Also keep the persistence model simple:
+
+- do not auto-unload the created target on exit
+- a successfully created target may remain available for later runs
 
 If the target still does not become usable, hand off cleanly.
 
@@ -247,6 +265,7 @@ Keep this narrow:
 - only when the failure looks like a missing model
 - one download attempt
 - no retry loop
+- if loading still fails after the download, hand off clearly to a manual `dpdfnet download <model>` in case local model state is partial or interrupted
 - no package-management sprawl
 
 If loading still fails after that, stop with a clear error.
@@ -316,7 +335,7 @@ The default command flow is the run workflow.
 
 1. resolve the model-native sample rate
 2. resolve explicit or auto-selected devices
-3. on Linux, optionally try to create the recommended virtual mic target if output auto-selection needs it
+3. on Linux, optionally try to create the recommended virtual mic target if output auto-selection needs it, but hand off instead of creating duplicates when the target already exists and PortAudio still cannot use it
 4. validate same-host-API and device/channel assumptions
 5. resolve effective block size and negotiated channel counts
 6. print a summary so the user can spot mistakes before audio starts
@@ -371,6 +390,9 @@ If you are an AI assistant editing this repo:
 - do not collapse the code back into one file
 - do not replace straightforward code with many tiny wrappers
 - keep auto mode optimistic for convenience, but strict about outputs
+- keep Ctrl+C and failed-run handoffs concise and traceback-free
+- keep Linux virtual mic auto-creation duplicate-aware and persistent, do not auto-unload it and do not stack extra copies when PortAudio still cannot use the existing target
+- if automatic model download still leaves the model unloadable, hand off to a manual `dpdfnet download <model>` rather than adding retries or hidden cleanup
 - do not let auto mode silently route the bridge into speakers/headphones or monitor/source endpoints
 - keep Linux virtual mic auto-creation and model auto-download fail-fast and one-shot
 - keep architecture rules and user docs aligned with the code

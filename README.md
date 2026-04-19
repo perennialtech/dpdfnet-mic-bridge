@@ -104,6 +104,8 @@ dpdfnet download dpdfnet8_48khz_hr
 
 If the selected model is missing when you start the bridge, the run path tries one automatic download and then continues or fails fast.
 
+If that automatic download is interrupted, or if the local model files look partial or inconsistent afterward, rerun `dpdfnet download <model>` manually once and then start the bridge again.
+
 ## Quick start on Windows
 
 1. Install VB-CABLE.
@@ -143,6 +145,8 @@ Windows note:
    ```
 
 3. If no likely virtual mic target is visible and `--output` was omitted, the app tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`.
+
+   If that succeeds, the target is left in place for later runs. If it already exists but PortAudio still cannot use it, the app hands off instead of trying to create duplicate copies.
 
 4. If auto mode still needs help, use fallback discovery:
 
@@ -207,14 +211,18 @@ python -m mic_bridge_app --input 18 --output 16
 - Input and output must belong to the same PortAudio host API.
 - Auto mode is intentionally strict about outputs, it only auto-selects likely bridge-style outputs and will not silently pick speakers/headphones or monitor/source endpoints.
 - On Windows, VB-CABLE must already exist before the script is started.
+- Ctrl+C during startup or streaming should exit cleanly.
 - On Linux, if `--output` is omitted and no likely virtual mic target is visible, the run path tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`.
+- If that Linux target is created automatically, it is left in place for later runs rather than being auto-unloaded on exit.
+- If the recommended Linux target already exists but PortAudio still cannot use it, the run path hands off instead of trying to create duplicate copies.
 - On Linux/JACK, omitting `--block-ms` intentionally chooses a friendlier exact frame size than raw 10.0 ms.
 - The bridge output is enhanced mono, but output channel negotiation prefers stereo first so Linux virtual sinks do not accidentally become left-only.
 - If the chosen model appears to be missing locally, the run path tries one automatic download and then continues or fails fast.
+- If the automatic model download is interrupted or still leaves the model unloadable, rerun `dpdfnet download <model>` manually once and then retry.
 - `list-devices` remains available as the fallback discovery and manual pinning workflow.
 
 ## Developer note
 
-This repo intentionally carries design rationale forward in `ARCHITECTURE.md` so future humans and future AI sessions do not have to rediscover why Version 0 made certain choices.
+This repo intentionally carries design rationale, failure-mode policy, and user-handoff rules forward in `ARCHITECTURE.md` so future humans and future AI sessions do not have to rediscover why Version 0 made certain choices.
 
 If you change auto-selection policy, output strictness, Linux virtual mic creation behavior, model loading flow, stream topology, block sizing, or Linux virtual mic behavior, update `ARCHITECTURE.md` in the same change.

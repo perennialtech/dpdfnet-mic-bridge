@@ -5,6 +5,7 @@ This module owns:
 - resolving explicit and auto-selected devices into a concrete DeviceSelection
   and RunConfig
 - smooth handoffs when auto mode cannot choose safely
+- smooth handoffs around repeated runs, interrupted setup, and partial Linux target/model state
 - optional Linux virtual mic creation when output auto-selection needs it
 - optional one-shot model download when the chosen model is missing locally
 - printing the run summary
@@ -39,7 +40,6 @@ from .audio_system import (
     choose_best_auto_output,
     format_jack_block_ms_hints,
     get_device_info,
-    get_hostapi_names,
     has_bridge_output_tags,
     hostapi_filter_key_for_name,
     hostapi_name_for_device,
@@ -50,12 +50,17 @@ from .audio_system import (
     jack_block_ms_for_frames,
     linux_virtual_mic_command,
     negotiate_stream_channels,
+    query_audio_inventory,
     recommended_linux_jack_block_frames,
     resolve_effective_block_size,
     same_hostapi_guidance,
     suggest_run_pair,
 )
-from .constants import DEFAULT_BLOCK_MS, LINUX_VIRTUAL_MIC_DESCRIPTION
+from .constants import (
+    DEFAULT_BLOCK_MS,
+    LINUX_VIRTUAL_MIC_DESCRIPTION,
+    LINUX_VIRTUAL_MIC_SINK_NAME,
+)
 from .dependencies import require_dpdfnet, require_sounddevice
 from .domain import (
     AudioFifo,
@@ -74,9 +79,7 @@ def _eprint(*args: object) -> None:
 def _scan_all_device_probes(
     sample_rate: int,
 ) -> tuple[list[DeviceProbe], list[DeviceProbe], list[str]]:
-    sd_mod = require_sounddevice()
-    devices = sd_mod.query_devices()
-    hostapi_names = get_hostapi_names(sd_mod)
+    devices, hostapi_names = query_audio_inventory()
     input_probes, output_probes = build_device_probes(
         devices=devices,
         hostapi_names=hostapi_names,
@@ -159,8 +162,7 @@ def _build_no_auto_output_handoff(
     *,
     input_hostapi_name: str | None,
     output_probes: list[DeviceProbe],
-    create_attempted: bool,
-    create_error: str | None,
+    virtual_mic_note: str | None,
 ) -> str:
     visible_bridge_hostapis = _bridge_output_hostapis(output_probes)
 
@@ -186,20 +188,12 @@ def _build_no_auto_output_handoff(
         )
 
     if system == "Linux":
-        creation_line = ""
-        detail = _first_line(create_error)
-        if create_attempted and detail is not None:
-            creation_line = f"Automatic creation attempt: {detail}\n"
-        elif create_attempted:
-            creation_line = (
-                f"I tried to create '{LINUX_VIRTUAL_MIC_DESCRIPTION}' automatically, "
-                "but it did not become usable.\n"
-            )
+        extra_note = f"{virtual_mic_note}\n" if virtual_mic_note is not None else ""
 
         return (
             "Could not auto-select a bridge output.\n\n"
             "Auto mode only picks a likely virtual mic target, never speakers/headphones or monitor/source endpoints.\n"
-            f"{creation_line}"
+            f"{extra_note}"
             "Next step:\n"
             "  python mic_bridge.py list-devices\n"
             "If needed, create it manually with:\n"
@@ -220,8 +214,7 @@ def _build_no_auto_pair_handoff(
     sample_rate: int,
     input_probes: list[DeviceProbe],
     output_probes: list[DeviceProbe],
-    create_attempted: bool,
-    create_error: str | None,
+    virtual_mic_note: str | None,
 ) -> str:
     visible_input_hostapis = _candidate_input_hostapis(input_probes)
     visible_bridge_hostapis = _bridge_output_hostapis(output_probes)
@@ -237,8 +230,7 @@ def _build_no_auto_pair_handoff(
         return _build_no_auto_output_handoff(
             input_hostapi_name=None,
             output_probes=output_probes,
-            create_attempted=create_attempted,
-            create_error=create_error,
+            virtual_mic_note=virtual_mic_note,
         )
 
     return (
@@ -251,11 +243,47 @@ def _build_no_auto_pair_handoff(
     )
 
 
-def _try_create_linux_virtual_mic_target() -> tuple[bool, str | None]:
-    command = shlex.split(linux_virtual_mic_command())
+def _pactl_failure_detail(completed: subprocess.CompletedProcess[str]) -> str:
+    detail = _first_line(completed.stderr) or _first_line(completed.stdout)
+    if detail is not None:
+        return detail
+    return f"`pactl` exited with status {completed.returncode}."
 
-    if shutil.which("pactl") is None:
-        return False, "`pactl` was not found."
+
+def _linux_virtual_mic_sink_exists(pactl_path: str) -> bool | None:
+    try:
+        completed = subprocess.run(
+            [pactl_path, "list", "short", "sinks"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+
+    if completed.returncode != 0:
+        return None
+
+    for line in completed.stdout.splitlines():
+        if not line.strip():
+            continue
+        columns = line.split("\t") if "\t" in line else line.split()
+        if len(columns) >= 2 and columns[1].strip() == LINUX_VIRTUAL_MIC_SINK_NAME:
+            return True
+
+    return False
+
+
+def _try_create_linux_virtual_mic_target() -> tuple[str, str | None]:
+    pactl_path = shutil.which("pactl")
+    if pactl_path is None:
+        return "failed", "`pactl` was not found."
+
+    if _linux_virtual_mic_sink_exists(pactl_path) is True:
+        return "already-exists", None
+
+    command = shlex.split(linux_virtual_mic_command())
+    command[0] = pactl_path
 
     try:
         completed = subprocess.run(
@@ -265,16 +293,13 @@ def _try_create_linux_virtual_mic_target() -> tuple[bool, str | None]:
             text=True,
         )
     except OSError as exc:
-        return False, str(exc)
+        return "failed", str(exc)
 
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        if not detail:
-            detail = f"`pactl` exited with status {completed.returncode}."
-        return False, detail
+        return "failed", _pactl_failure_detail(completed)
 
     time.sleep(0.35)
-    return True, None
+    return "created", None
 
 
 def _looks_like_missing_model_error(exc: BaseException, model_name: str) -> bool:
@@ -321,7 +346,8 @@ def _download_dpdfnet_model_once(model_name: str) -> None:
 
     if completed.returncode != 0:
         raise RuntimeError(
-            "Automatic model download failed.\n"
+            "Automatic model download did not finish successfully.\n"
+            "If this was interrupted or left partial local model state, run this once manually, then try again:\n"
             f"Run this once manually, then try again:\n"
             f"  {display_command}"
         )
@@ -342,7 +368,10 @@ def _build_stream_enhancer(dpdfnet_mod, *, model_name: str, verbose: bool):
         return dpdfnet_mod.StreamEnhancer(model=model_name, verbose=verbose)
     except Exception as exc:
         raise RuntimeError(
-            f"Model '{model_name}' could not be loaded after the automatic download: {exc}"
+            f"Model '{model_name}' still could not be loaded after the automatic download.\n"
+            "If the local model files are partial or inconsistent, run this once manually and then retry:\n"
+            f"  dpdfnet download {model_name}\n"
+            f"Details: {_first_line(str(exc)) or exc}"
         ) from exc
 
 
@@ -372,16 +401,14 @@ def _resolve_run_device_ids(
 
     input_probes, output_probes, hostapi_names = _scan_all_device_probes(sample_rate)
     linux_virtual_mic_was_created = False
-    create_attempted = False
-    create_error: str | None = None
+    virtual_mic_note: str | None = None
 
     def maybe_create_linux_virtual_mic() -> None:
         nonlocal input_probes
         nonlocal output_probes
         nonlocal hostapi_names
         nonlocal linux_virtual_mic_was_created
-        nonlocal create_attempted
-        nonlocal create_error
+        nonlocal virtual_mic_note
 
         if platform.system() != "Linux" or requested_output_id is not None:
             return
@@ -393,26 +420,43 @@ def _resolve_run_device_ids(
         if any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
             return
 
-        create_attempted = True
         print(
             f"No likely virtual mic target is visible, trying to create '{LINUX_VIRTUAL_MIC_DESCRIPTION}' automatically..."
         )
-        created, error = _try_create_linux_virtual_mic_target()
-        if not created:
-            create_error = error
+        status, detail = _try_create_linux_virtual_mic_target()
+        if status == "failed":
+            virtual_mic_note = (
+                f"Automatic Linux virtual mic setup could not create '{LINUX_VIRTUAL_MIC_DESCRIPTION}': "
+                f"{detail or 'unknown `pactl` error.'}"
+            )
             return
 
-        linux_virtual_mic_was_created = True
         input_probes, output_probes, hostapi_names = _scan_all_device_probes(
             sample_rate
         )
 
         if any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
-            print(
-                f"Created Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}'."
+            if status == "created":
+                linux_virtual_mic_was_created = True
+                print(
+                    f"Created Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}'."
+                )
+            else:
+                print(
+                    f"Found existing Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}'."
+                )
+            return
+
+        if status == "created":
+            linux_virtual_mic_was_created = True
+            virtual_mic_note = (
+                f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created, but PortAudio still does not expose it as a usable output device."
             )
-        else:
-            create_error = "The target did not become visible through PortAudio."
+            return
+
+        virtual_mic_note = (
+            f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' already exists in PipeWire/PulseAudio, but PortAudio still does not expose it as a usable output device. Not creating another copy."
+        )
 
     if requested_input_id is not None and requested_output_id is None:
         input_info = get_device_info(requested_input_id)
@@ -451,8 +495,7 @@ def _resolve_run_device_ids(
             _build_no_auto_output_handoff(
                 input_hostapi_name=input_hostapi,
                 output_probes=output_probes,
-                create_attempted=create_attempted,
-                create_error=create_error,
+                virtual_mic_note=virtual_mic_note,
             )
         )
 
@@ -510,8 +553,7 @@ def _resolve_run_device_ids(
             sample_rate=sample_rate,
             input_probes=input_probes,
             output_probes=output_probes,
-            create_attempted=create_attempted,
-            create_error=create_error,
+            virtual_mic_note=virtual_mic_note,
         )
     )
 
@@ -529,7 +571,6 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     - auto mode may resolve omitted devices, but output auto-selection remains
       deliberately stricter than input auto-selection
     """
-    sd_mod = require_sounddevice()
 
     sample_rate = resolve_stream_sample_rate(args.model, args.samplerate, context="run")
 
@@ -542,7 +583,7 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
         requested_output_id=requested_output_id,
     )
 
-    hostapi_names = get_hostapi_names(sd_mod)
+    _, hostapi_names = query_audio_inventory()
 
     input_info = get_device_info(selection.input_device_id)
     output_info = get_device_info(selection.output_device_id)
@@ -677,7 +718,7 @@ def _print_run_summary(config: RunConfig) -> None:
 
     if config.linux_virtual_mic_was_created:
         print(
-            f"  - The Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created automatically for this run."
+            f"  - The Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created automatically for this run and will be left in place for later runs."
         )
 
     print(
@@ -883,9 +924,20 @@ def run_command(args: argparse.Namespace) -> int:
     except Exception as exc:
         if fatal_callback_error:
             raise RuntimeError(
-                "The audio callback aborted due to an internal error."
+                "The audio callback aborted unexpectedly.\n"
+                "Try the bridge again. If it repeats, re-run:\n"
+                "  python mic_bridge.py list-devices\n"
+                "and consider a different device pair or block size."
             ) from fatal_callback_error[0]
-        raise RuntimeError(f"Failed to open or run the audio stream: {exc}") from exc
+
+        detail = _first_line(str(exc)) or str(exc)
+        raise RuntimeError(
+            "Failed to open or run the audio stream.\n"
+            f"Details: {detail}\n"
+            "If the devices changed, disappeared, or became busy, re-run:\n"
+            "  python mic_bridge.py list-devices\n"
+            "and pin fresh IDs if needed."
+        ) from exc
 
     nonzero_status_lines = status_counter.nonzero_lines()
     if nonzero_status_lines:

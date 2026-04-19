@@ -18,9 +18,9 @@ from .audio_system import (
     format_probe_openability,
     format_samplerate,
     format_tags,
-    get_hostapi_names,
     jack_block_ms_for_frames,
     linux_virtual_mic_command,
+    query_audio_inventory,
     recommended_linux_jack_block_frames,
     resolve_list_hostapi_filter,
     suggest_run_pair,
@@ -30,7 +30,7 @@ from .constants import (
     HOSTAPI_FILTER_DISPLAY_NAMES,
     LINUX_VIRTUAL_MIC_DESCRIPTION,
 )
-from .dependencies import require_sounddevice
+
 from .domain import DeviceProbe
 from .modeling import resolve_stream_sample_rate
 
@@ -114,6 +114,13 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
         print(
             f"    to create '{LINUX_VIRTUAL_MIC_DESCRIPTION}' automatically with pactl."
         )
+        print(
+            f"  - If it creates '{LINUX_VIRTUAL_MIC_DESCRIPTION}', it leaves it in place for later runs."
+        )
+        print(
+            "  - If that target already exists but PortAudio still cannot use it, the run path"
+        )
+        print("    hands off instead of trying to stack duplicate copies.")
         print("  - Recommended virtual mic target command:")
         print(f"      {linux_virtual_mic_command()}")
         print("  - Why this form:")
@@ -170,8 +177,6 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
 
 
 def list_devices_command(args: argparse.Namespace) -> int:
-    sd_mod = require_sounddevice()
-
     probe_sample_rate = resolve_stream_sample_rate(
         args.model,
         args.samplerate,
@@ -183,8 +188,7 @@ def list_devices_command(args: argparse.Namespace) -> int:
             "[note] This script is primarily intended for Windows 10/11 and Linux PipeWire systems, though device listing may still work elsewhere."
         )
 
-    devices = sd_mod.query_devices()
-    hostapi_names = get_hostapi_names(sd_mod)
+    devices, hostapi_names = query_audio_inventory()
     hostapi_filter = resolve_list_hostapi_filter(
         args.hostapi,
         args.all_apis,
@@ -231,6 +235,18 @@ def list_devices_command(args: argparse.Namespace) -> int:
         print(
             f"No devices matched the current Host API filter '{hostapi_filter}'. Try --all-apis."
         )
+        print()
+
+    if hostapi_filter == "all" and not input_probes and not output_probes:
+        print("No PortAudio devices are currently visible.")
+        if platform.system() == "Windows":
+            print(
+                "Check Windows sound settings and confirm your audio devices, including VB-CABLE if you plan to use it, are installed beforehand."
+            )
+        elif platform.system() == "Linux":
+            print(
+                "Check that your audio session is running and that PortAudio can see the expected PipeWire, PulseAudio, JACK, or ALSA backend."
+            )
         print()
 
     suggested_pair = suggest_run_pair(input_probes, output_probes)

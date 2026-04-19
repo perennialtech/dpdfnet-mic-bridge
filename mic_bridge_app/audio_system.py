@@ -64,6 +64,39 @@ def get_hostapi_names(sd_mod) -> list[str]:
     return [str(item["name"]) for item in hostapis]
 
 
+def query_audio_inventory():
+    """
+    Query devices and host APIs through sounddevice/PortAudio and turn
+    enumeration failures into short user-facing handoffs.
+    """
+    sd_mod = require_sounddevice()
+
+    try:
+        devices = sd_mod.query_devices()
+        hostapi_names = get_hostapi_names(sd_mod)
+    except Exception as exc:
+        detail_text = str(exc).strip()
+        detail = detail_text.splitlines()[0] if detail_text else type(exc).__name__
+        system = platform.system()
+
+        if system == "Windows":
+            guidance = (
+                "Windows did not provide a usable PortAudio device list. "
+                "Make sure your audio devices appear in Windows sound settings, "
+                "and if you plan to bridge into VB-CABLE, install it beforehand outside this script."
+            )
+        elif system == "Linux":
+            guidance = (
+                "PortAudio could not enumerate Linux audio devices. Make sure your audio session is running and that your PortAudio build can see the expected PipeWire, PulseAudio, JACK, or ALSA backend."
+            )
+        else:
+            guidance = "PortAudio could not enumerate audio devices on this system."
+
+        raise RuntimeError(f"Could not query audio devices.\n{guidance}\nDetails: {detail}") from exc
+
+    return devices, hostapi_names
+
+
 def hostapi_filter_key_for_name(hostapi_name: str) -> str | None:
     normalized = normalize_hostapi_name(hostapi_name)
     for filter_name, aliases in _NORMALIZED_HOSTAPI_ALIASES.items():
