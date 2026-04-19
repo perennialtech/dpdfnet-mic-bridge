@@ -9,6 +9,9 @@ by auto-selection.
 Keep user-facing workflow text in `listing.py` and `runtime.py`. Keep parser
 definition in `cli.py`. This file should focus on reusable audio-system logic.
 
+Keep bridge-output identification centralized here so auto-selection, pinned
+pair suggestions, and runtime warnings stay aligned.
+
 Refactor guardrail:
 Prefer a few cohesive helpers over many one-line wrappers. This module is meant
 to centralize policy, not to fragment straightforward code into helper-sprawl.
@@ -191,6 +194,21 @@ def infer_device_tags(name: str) -> tuple[str, ...]:
             deduped.append(tag)
 
     return tuple(deduped)
+
+
+def has_bridge_output_tags(tags: tuple[str, ...]) -> bool:
+    """
+    Return whether name-derived tags positively identify a bridge-style output.
+
+    Keep the positive-tag rule centralized here so runtime warnings do not drift
+    away from auto-selection policy.
+    """
+    tag_set = set(tags)
+    return (
+        "vb-cable-playback" in tag_set
+        or "virtual-sink" in tag_set
+        or "dpdfnet" in tag_set
+    )
 
 
 def iter_input_channel_candidates(max_channels: int) -> Iterable[int]:
@@ -591,11 +609,20 @@ def choose_best_auto_input(
 
 
 def is_likely_virtual_bridge_output(probe: DeviceProbe) -> bool:
+    """
+    Outputs for auto mode must be playback-side bridge endpoints.
+
+    Positive identification is tag-based and intentionally narrow. Outputs that
+    look like monitors or recording-side endpoints are excluded explicitly even
+    if their names also contain other virtual-audio markers.
+    """
     tags = set(probe.tags)
     return (
         probe.direction == "output"
         and probe.open_channels is not None
-        and ("vb-cable-playback" in tags or "virtual-sink" in tags or "dpdfnet" in tags)
+        and has_bridge_output_tags(probe.tags)
+        and "monitor" not in tags
+        and "vb-cable-recording" not in tags
     )
 
 

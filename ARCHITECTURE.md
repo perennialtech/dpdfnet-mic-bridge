@@ -55,8 +55,10 @@ mic_bridge_app/dependencies.py
     Optional imports and user-friendly "please install X" errors.
 
 mic_bridge_app/domain.py
-    Dataclasses and tiny stateful helpers used by the callback flow:
+    Dataclasses and tiny stateful helpers used by device resolution and the
+    callback flow:
     - DeviceProbe
+    - DeviceSelection
     - RunConfig
     - AudioFifo
     - CallbackStatusCounter
@@ -70,6 +72,7 @@ mic_bridge_app/audio_system.py
     - host API normalization and filtering
     - host API preference scoring
     - device tags
+    - bridge-output identification policy
     - channel negotiation
     - device probing
     - scoring and run-pair suggestion
@@ -105,7 +108,7 @@ If a rule is platform-specific, device-selection-specific, or model-specific, ke
 Examples:
 
 - sample-rate compatibility belongs in `modeling.py`
-- host-API choice, probing rules, scoring, and auto-selection heuristics belong in `audio_system.py`
+- host-API choice, device tagging, bridge-output identification, probing rules, scoring, and auto-selection heuristics belong in `audio_system.py`
 - parser text belongs in `cli.py`
 - automatic Linux virtual mic creation, one-shot model download, and callback behavior belong in `runtime.py`
 
@@ -173,6 +176,8 @@ Do not remove `AudioFifo` just because the common case looks one-in, one-out.
 
 `StreamEnhancer.process()` may legally return fewer or more samples than one callback block, especially around startup or with non-hop-aligned block sizes. The FIFO protects against dropped or duplicated audio.
 
+The FIFO also keeps chunk storage plus a read offset instead of rebuilding partially consumed chunks into new arrays. Keep that low-churn behavior in the callback path.
+
 ### Keep same-host-API enforcement
 
 Input and output must belong to the same PortAudio host API.
@@ -199,6 +204,7 @@ Auto mode is allowed to select devices, but only under explicit safety rules.
 Important consequences:
 
 - auto-selected outputs must look like bridge outputs
+- auto-selected outputs must be playback-side bridge targets, not monitor/source endpoints
 - auto mode must not silently route enhanced mic audio into speakers or headphones
 - if auto mode cannot choose safely, it should stop and give a short, actionable handoff rather than guessing
 
@@ -333,7 +339,7 @@ It is intentionally optimized for fallback discovery and explicit pinning, not f
 
 If you want to change parser flags or help text, edit `mic_bridge_app/cli.py`.
 
-If you want to change host-API defaults, device tagging, channel probing, device scoring, strict auto-output rules, or Linux/JACK block policy, edit `mic_bridge_app/audio_system.py`.
+If you want to change host-API defaults, device tagging, bridge-output identification, channel probing, device scoring, strict auto-output rules, or Linux/JACK block policy, edit `mic_bridge_app/audio_system.py`.
 
 If you want to change what `list-devices` prints, edit `mic_bridge_app/listing.py`.
 
@@ -365,9 +371,9 @@ If you are an AI assistant editing this repo:
 - do not collapse the code back into one file
 - do not replace straightforward code with many tiny wrappers
 - keep auto mode optimistic for convenience, but strict about outputs
-- do not let auto mode silently route the bridge into speakers/headphones
+- do not let auto mode silently route the bridge into speakers/headphones or monitor/source endpoints
 - keep Linux virtual mic auto-creation and model auto-download fail-fast and one-shot
 - keep architecture rules and user docs aligned with the code
-- treat stream topology, sample-rate policy, same-host-API policy, and strict auto-output policy as deliberate design choices unless the task explicitly asks to redesign them
+- treat stream topology, sample-rate policy, same-host-API policy, strict auto-output policy, and bridge-output identification policy as deliberate design choices unless the task explicitly asks to redesign them
 
 If you make behavior changes, update the docs in the same patch.

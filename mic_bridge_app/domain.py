@@ -2,7 +2,8 @@
 Shared data structures and small stateful helpers.
 
 These types are deliberately lightweight and easy to reason about. Keeping them
-centralized avoids rediscovering callback-state behavior across multiple files.
+centralized avoids rediscovering device-selection and callback-state behavior
+across multiple files.
 """
 
 from __future__ import annotations
@@ -26,6 +27,15 @@ class DeviceProbe:
     open_channels: int | None
     probe_failures: tuple[str, ...]
     tags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DeviceSelection:
+    input_device_id: int
+    output_device_id: int
+    input_was_auto_selected: bool
+    output_was_auto_selected: bool
+    linux_virtual_mic_was_created: bool
 
 
 @dataclass(frozen=True)
@@ -60,10 +70,16 @@ class AudioFifo:
     `dpdfnet.StreamEnhancer.process()` may not always return exactly the same
     number of samples as the callback asked for. The FIFO lets us accept any
     returned chunk size without dropping or duplicating samples.
+
+    Implementation note:
+    The FIFO keeps queued chunks plus a read offset into the head chunk. Do not
+    replace partial-consume handling with `chunk = chunk[take:]` in the callback
+    path, that would turn every partial read into a fresh array allocation.
     """
 
     def __init__(self) -> None:
         self._chunks: deque[np.ndarray] = deque()
+        self._head_index = 0
         self._size = 0
 
     @property
@@ -91,16 +107,20 @@ class AudioFifo:
 
         while write_pos < count and self._chunks:
             chunk = self._chunks[0]
-            take = min(count - write_pos, int(chunk.size))
-            out[write_pos : write_pos + take] = chunk[:take]
+            available_in_head = int(chunk.size) - self._head_index
+            take = min(count - write_pos, available_in_head)
 
-            if take == chunk.size:
-                self._chunks.popleft()
-            else:
-                self._chunks[0] = chunk[take:]
+            start = self._head_index
+            end = start + take
+            out[write_pos : write_pos + take] = chunk[start:end]
 
-            self._size -= take
             write_pos += take
+            self._size -= take
+            self._head_index = end
+
+            if self._head_index >= int(chunk.size):
+                self._chunks.popleft()
+                self._head_index = 0
 
         return out
 

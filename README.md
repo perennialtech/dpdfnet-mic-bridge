@@ -40,7 +40,7 @@ mic_bridge_app/app.py          top-level CLI dispatch, no-subcommand defaulting
 mic_bridge_app/cli.py          argparse parser and help text
 mic_bridge_app/constants.py    static configuration and platform constants
 mic_bridge_app/dependencies.py optional import wrappers
-mic_bridge_app/domain.py       data models and small callback-safe helpers
+mic_bridge_app/domain.py       data models and small stateful helpers
 mic_bridge_app/modeling.py     model/sample-rate policy
 mic_bridge_app/audio_system.py device probing, host API policy, auto-selection policy, block-size policy
 mic_bridge_app/listing.py      fallback discovery and ID-pinning workflow
@@ -131,7 +131,7 @@ If the selected model is missing when you start the bridge, the run path tries o
 Windows note:
 
 - VB-CABLE must already be installed outside this script.
-- Auto mode will not silently pick speakers or headphones as the bridge output.
+- Auto mode will not silently pick speakers/headphones or the recording-side endpoint as the bridge output.
 
 ## Quick start on Linux with PipeWire
 
@@ -205,7 +205,7 @@ python -m mic_bridge_app --input 18 --output 16
 - The recommended model `dpdfnet8_48khz_hr` therefore expects 48,000 Hz.
 - The bridge uses a single full-duplex `sounddevice.Stream`.
 - Input and output must belong to the same PortAudio host API.
-- Auto mode is intentionally strict about outputs, it only auto-selects likely bridge-style outputs and will not silently pick speakers/headphones.
+- Auto mode is intentionally strict about outputs, it only auto-selects likely bridge-style outputs and will not silently pick speakers/headphones or monitor/source endpoints.
 - On Windows, VB-CABLE must already exist before the script is started.
 - On Linux, if `--output` is omitted and no likely virtual mic target is visible, the run path tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`.
 - On Linux/JACK, omitting `--block-ms` intentionally chooses a friendlier exact frame size than raw 10.0 ms.

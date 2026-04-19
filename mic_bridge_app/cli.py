@@ -101,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Run the live microphone -> DPDFNet -> output-device bridge.\n"
             "If --input and/or --output are omitted, the command tries to auto-select them.\n"
             "Auto-output selection is intentionally strict and will not silently pick\n"
-            "speakers or headphones as the bridge output."
+            "speakers, headphones, or monitor/source endpoints as the bridge output."
         ),
     )
     run_parser.add_argument(

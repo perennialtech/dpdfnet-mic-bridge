@@ -73,7 +73,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
         print(
             "  - Auto mode only picks likely bridge outputs such as VB-CABLE 'CABLE Input',"
         )
-        print("    never speakers/headphones.")
+        print("    never speakers/headphones or the recording-side endpoint.")
         print(
             "  - VB-CABLE still needs to be installed and configured outside this script."
         )
@@ -105,8 +105,9 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
         print("    otherwise prefer PulseAudio, then JACK, then ALSA.")
         print("  - Keep --input and --output on the same host API.")
         print(
-            "  - Auto mode only picks likely virtual mic targets for output, never speakers/headphones."
+            "  - Auto mode only picks likely virtual mic targets for output, never speakers/headphones"
         )
+        print("    or monitor/source endpoints.")
         print(
             "  - If --output is omitted and no likely virtual target is visible, the run path tries"
         )

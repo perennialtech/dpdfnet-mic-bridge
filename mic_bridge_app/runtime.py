@@ -2,7 +2,8 @@
 Implementation of the `run` command.
 
 This module owns:
-- resolving explicit and auto-selected devices into a concrete RunConfig
+- resolving explicit and auto-selected devices into a concrete DeviceSelection
+  and RunConfig
 - smooth handoffs when auto mode cannot choose safely
 - optional Linux virtual mic creation when output auto-selection needs it
 - optional one-shot model download when the chosen model is missing locally
@@ -39,6 +40,7 @@ from .audio_system import (
     format_jack_block_ms_hints,
     get_device_info,
     get_hostapi_names,
+    has_bridge_output_tags,
     hostapi_filter_key_for_name,
     hostapi_name_for_device,
     infer_device_tags,
@@ -55,7 +57,13 @@ from .audio_system import (
 )
 from .constants import DEFAULT_BLOCK_MS, LINUX_VIRTUAL_MIC_DESCRIPTION
 from .dependencies import require_dpdfnet, require_sounddevice
-from .domain import AudioFifo, CallbackStatusCounter, DeviceProbe, RunConfig
+from .domain import (
+    AudioFifo,
+    CallbackStatusCounter,
+    DeviceProbe,
+    DeviceSelection,
+    RunConfig,
+)
 from .modeling import resolve_stream_sample_rate
 
 
@@ -171,7 +179,7 @@ def _build_no_auto_output_handoff(
     if system == "Windows":
         return (
             "Could not auto-select a bridge output.\n\n"
-            "Auto mode only picks a likely virtual bridge target such as VB-CABLE 'CABLE Input', never speakers/headphones.\n"
+            "Auto mode only picks a likely virtual bridge target such as VB-CABLE 'CABLE Input', never speakers/headphones or the recording-side endpoint.\n"
             "Install and configure VB-CABLE first, then run:\n"
             "  python mic_bridge.py list-devices\n"
             "and re-run with --output <id> or with both --input <id> and --output <id>."
@@ -190,7 +198,7 @@ def _build_no_auto_output_handoff(
 
         return (
             "Could not auto-select a bridge output.\n\n"
-            "Auto mode only picks a likely virtual mic target, never speakers/headphones.\n"
+            "Auto mode only picks a likely virtual mic target, never speakers/headphones or monitor/source endpoints.\n"
             f"{creation_line}"
             "Next step:\n"
             "  python mic_bridge.py list-devices\n"
@@ -200,7 +208,7 @@ def _build_no_auto_output_handoff(
 
     return (
         "Could not auto-select a bridge output.\n\n"
-        "Auto mode only picks likely bridge-style outputs, not ordinary speakers/headphones.\n"
+        "Auto mode only picks likely bridge-style outputs, not ordinary speakers/headphones or monitor/source endpoints.\n"
         "Next step:\n"
         "  python mic_bridge.py list-devices\n"
         "Then re-run with --output <id> or with both --input <id> and --output <id>."
@@ -343,7 +351,7 @@ def _resolve_run_device_ids(
     sample_rate: int,
     requested_input_id: int | None,
     requested_output_id: int | None,
-) -> tuple[int, int, bool, bool, bool]:
+) -> DeviceSelection:
     """
     Resolve explicit and auto-selected device IDs.
 
@@ -354,7 +362,13 @@ def _resolve_run_device_ids(
       if no likely bridge-style output is visible at all
     """
     if requested_input_id is not None and requested_output_id is not None:
-        return requested_input_id, requested_output_id, False, False, False
+        return DeviceSelection(
+            input_device_id=requested_input_id,
+            output_device_id=requested_output_id,
+            input_was_auto_selected=False,
+            output_was_auto_selected=False,
+            linux_virtual_mic_was_created=False,
+        )
 
     input_probes, output_probes, hostapi_names = _scan_all_device_probes(sample_rate)
     linux_virtual_mic_was_created = False
@@ -372,6 +386,10 @@ def _resolve_run_device_ids(
         if platform.system() != "Linux" or requested_output_id is not None:
             return
 
+        # One-shot graph mutation is reserved for the case where no likely
+        # bridge output is visible at all. If a bridge target already exists but
+        # only on a mismatched host API, Version 0 hands off instead of trying
+        # to mutate the graph further.
         if any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
             return
 
@@ -405,12 +423,12 @@ def _resolve_run_device_ids(
             hostapi_name=input_hostapi,
         )
         if output_probe is not None:
-            return (
-                requested_input_id,
-                output_probe.device_id,
-                False,
-                True,
-                linux_virtual_mic_was_created,
+            return DeviceSelection(
+                input_device_id=requested_input_id,
+                output_device_id=output_probe.device_id,
+                input_was_auto_selected=False,
+                output_was_auto_selected=True,
+                linux_virtual_mic_was_created=linux_virtual_mic_was_created,
             )
 
         if not any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
@@ -421,12 +439,12 @@ def _resolve_run_device_ids(
                 hostapi_name=input_hostapi,
             )
             if output_probe is not None:
-                return (
-                    requested_input_id,
-                    output_probe.device_id,
-                    False,
-                    True,
-                    linux_virtual_mic_was_created,
+                return DeviceSelection(
+                    input_device_id=requested_input_id,
+                    output_device_id=output_probe.device_id,
+                    input_was_auto_selected=False,
+                    output_was_auto_selected=True,
+                    linux_virtual_mic_was_created=linux_virtual_mic_was_created,
                 )
 
         raise ValueError(
@@ -447,12 +465,12 @@ def _resolve_run_device_ids(
             hostapi_name=output_hostapi,
         )
         if input_probe is not None:
-            return (
-                input_probe.device_id,
-                requested_output_id,
-                True,
-                False,
-                linux_virtual_mic_was_created,
+            return DeviceSelection(
+                input_device_id=input_probe.device_id,
+                output_device_id=requested_output_id,
+                input_was_auto_selected=True,
+                output_was_auto_selected=False,
+                linux_virtual_mic_was_created=linux_virtual_mic_was_created,
             )
 
         raise ValueError(
@@ -466,12 +484,12 @@ def _resolve_run_device_ids(
     suggested_pair = suggest_run_pair(input_probes, output_probes)
     if suggested_pair is not None:
         input_probe, output_probe = suggested_pair
-        return (
-            input_probe.device_id,
-            output_probe.device_id,
-            True,
-            True,
-            linux_virtual_mic_was_created,
+        return DeviceSelection(
+            input_device_id=input_probe.device_id,
+            output_device_id=output_probe.device_id,
+            input_was_auto_selected=True,
+            output_was_auto_selected=True,
+            linux_virtual_mic_was_created=linux_virtual_mic_was_created,
         )
 
     if not any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
@@ -479,12 +497,12 @@ def _resolve_run_device_ids(
         suggested_pair = suggest_run_pair(input_probes, output_probes)
         if suggested_pair is not None:
             input_probe, output_probe = suggested_pair
-            return (
-                input_probe.device_id,
-                output_probe.device_id,
-                True,
-                True,
-                linux_virtual_mic_was_created,
+            return DeviceSelection(
+                input_device_id=input_probe.device_id,
+                output_device_id=output_probe.device_id,
+                input_was_auto_selected=True,
+                output_was_auto_selected=True,
+                linux_virtual_mic_was_created=linux_virtual_mic_was_created,
             )
 
     raise ValueError(
@@ -518,13 +536,7 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     requested_input_id = None if args.input is None else int(args.input)
     requested_output_id = None if args.output is None else int(args.output)
 
-    (
-        input_device_id,
-        output_device_id,
-        input_was_auto_selected,
-        output_was_auto_selected,
-        linux_virtual_mic_was_created,
-    ) = _resolve_run_device_ids(
+    selection = _resolve_run_device_ids(
         sample_rate=sample_rate,
         requested_input_id=requested_input_id,
         requested_output_id=requested_output_id,
@@ -532,17 +544,17 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
 
     hostapi_names = get_hostapi_names(sd_mod)
 
-    input_info = get_device_info(input_device_id)
-    output_info = get_device_info(output_device_id)
+    input_info = get_device_info(selection.input_device_id)
+    output_info = get_device_info(selection.output_device_id)
 
     if int(input_info["max_input_channels"]) < 1:
         raise ValueError(
-            f"Selected input device {input_device_id} exposes no input channels: {input_info['name']}"
+            f"Selected input device {selection.input_device_id} exposes no input channels: {input_info['name']}"
         )
 
     if int(output_info["max_output_channels"]) < 1:
         raise ValueError(
-            f"Selected output device {output_device_id} exposes no output channels: {output_info['name']}"
+            f"Selected output device {selection.output_device_id} exposes no output channels: {output_info['name']}"
         )
 
     input_hostapi = hostapi_name_for_device(input_info, hostapi_names)
@@ -551,8 +563,8 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     if int(input_info["hostapi"]) != int(output_info["hostapi"]):
         raise ValueError(
             "Input and output devices must use the same host API in Version 0.\n"
-            f"Input : id={input_device_id}, hostapi={input_hostapi}, name={input_info['name']}\n"
-            f"Output: id={output_device_id}, hostapi={output_hostapi}, name={output_info['name']}\n"
+            f"Input : id={selection.input_device_id}, hostapi={input_hostapi}, name={input_info['name']}\n"
+            f"Output: id={selection.output_device_id}, hostapi={output_hostapi}, name={output_info['name']}\n"
             f"{same_hostapi_guidance()}"
         )
 
@@ -564,13 +576,13 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     )
 
     input_channels = negotiate_stream_channels(
-        device_id=input_device_id,
+        device_id=selection.input_device_id,
         direction="input",
         samplerate=sample_rate,
         dtype="float32",
     )
     output_channels = negotiate_stream_channels(
-        device_id=output_device_id,
+        device_id=selection.output_device_id,
         direction="output",
         samplerate=sample_rate,
         dtype="float32",
@@ -586,19 +598,19 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
         requested_block_ms=requested_block_ms,
         block_policy=block_policy,
         block_size=block_size,
-        input_device_id=input_device_id,
+        input_device_id=selection.input_device_id,
         input_device_name=input_name,
         input_hostapi_name=input_hostapi,
         input_channels=input_channels,
         input_tags=infer_device_tags(input_name),
-        input_was_auto_selected=input_was_auto_selected,
-        output_device_id=output_device_id,
+        input_was_auto_selected=selection.input_was_auto_selected,
+        output_device_id=selection.output_device_id,
         output_device_name=output_name,
         output_hostapi_name=output_hostapi,
         output_channels=output_channels,
         output_tags=infer_device_tags(output_name),
-        output_was_auto_selected=output_was_auto_selected,
-        linux_virtual_mic_was_created=linux_virtual_mic_was_created,
+        output_was_auto_selected=selection.output_was_auto_selected,
+        linux_virtual_mic_was_created=selection.linux_virtual_mic_was_created,
         latency=str(args.latency),
     )
 
@@ -608,6 +620,19 @@ def _print_run_summary(config: RunConfig) -> None:
     input_tags = set(config.input_tags)
     output_tags = set(config.output_tags)
     input_hostapi_key = hostapi_filter_key_for_name(config.input_hostapi_name)
+
+    # Reuse the same positive bridge-tag rule as auto mode so the run summary
+    # does not quietly drift away from the selection policy.
+    output_looks_like_bridge_target = (
+        has_bridge_output_tags(config.output_tags)
+        and "monitor" not in output_tags
+        and "vb-cable-recording" not in output_tags
+    )
+    should_print_generic_nonbridge_warning = (
+        not output_looks_like_bridge_target
+        and "monitor" not in output_tags
+        and "vb-cable-recording" not in output_tags
+    )
 
     if config.block_policy == "explicit":
         block_line = (
@@ -694,11 +719,6 @@ def _print_run_summary(config: RunConfig) -> None:
             print(
                 "  - Linux note: a PipeWire-compatible PortAudio host API is recommended if available."
             )
-        if "virtual-sink" not in output_tags and "dpdfnet" not in output_tags:
-            print(
-                "  - Linux note: for a virtual microphone flow, you usually want --output to be"
-            )
-            print("    a virtual mic target rather than speakers/headphones.")
 
         if "dpdfnet" in output_tags and config.output_channels == 1:
             print(
@@ -731,6 +751,20 @@ def _print_run_summary(config: RunConfig) -> None:
         print(
             "  - Note: block size is rounded to whole frames, so the effective block duration may differ slightly."
         )
+
+    if should_print_generic_nonbridge_warning:
+        print(
+            "  - Warning: selected output does not look like a dedicated bridge target."
+        )
+        print("    Enhanced audio will be sent there directly.")
+        if system == "Windows":
+            print(
+                "    For the usual VB-CABLE flow, --output should be the playback endpoint,"
+            )
+            print("    usually named 'CABLE Input'.")
+        elif system == "Linux":
+            print("    For the usual virtual microphone flow, --output should be")
+            print("    a virtual mic sink target rather than speakers/headphones.")
 
     if "vb-cable-recording" in input_tags or "vb-cable-playback" in input_tags:
         print(
