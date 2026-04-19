@@ -22,11 +22,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire setups.\n"
-            "Running with no subcommand defaults to the 'run' workflow.\n"
-            "The fast path is usually just:\n"
-            "  python mic_bridge.py\n"
-            "Auto mode tries to choose a safe microphone input and a bridge-style output.\n"
-            "On Linux, if --output is omitted and no likely virtual mic target is visible,\n"
+            "Running with no subcommand shows this top-level help.\n"
+            "Use the 'run' subcommand to start the live bridge:\n"
+            "  python mic_bridge.py run\n"
+            "The run command can auto-select a safe microphone input and bridge-style output.\n"
+            "On Linux, if 'run' is used without --output and no likely virtual mic target is visible,\n"
             "the run command tries to create:\n"
             f"  {linux_virtual_mic_command()}\n"
             "On Windows, VB-CABLE still needs to be installed outside the script.\n"
@@ -37,9 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  python mic_bridge.py\n"
-            "  python mic_bridge.py --input 18 --output 16\n"
+            "  python mic_bridge.py run\n"
+            "  python mic_bridge.py run --input 18 --output 16\n"
             "  python mic_bridge.py list-devices\n"
             "  python -m mic_bridge_app\n"
+            "  python -m mic_bridge_app run\n"
         ),
     )
 
@@ -51,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Fallback device discovery for the mic bridge.\n"
-            "The usual fast path is to try 'python mic_bridge.py' first.\n"
+            "Start with top-level help or run 'python mic_bridge.py run' first.\n"
             "On Windows, the default view is filtered to WASAPI because that is the\n"
             "recommended starting point for this bridge.\n"
             "On Linux, the default view prefers a PipeWire host API if your PortAudio\n"

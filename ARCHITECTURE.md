@@ -191,13 +191,13 @@ Recommended choices:
 - Windows: WASAPI
 - Linux on PipeWire desktops: PipeWire if exposed by the PortAudio build, otherwise PulseAudio, then JACK, then ALSA
 
-### Default invocation drops into `run`
+### Default invocation shows top-level help
 
 This is deliberate UX policy.
 
-Invoking `python mic_bridge.py` or `python -m mic_bridge_app` without a subcommand should go straight into the live run path.
+Invoking `python mic_bridge.py` or `python -m mic_bridge_app` without a subcommand should show the top-level help text instead of starting the live run path implicitly.
 
-Top-level help still exists through `--help`, and `list-devices` still exists, but the default path is the run workflow.
+The explicit workflows remain `run` and `list-devices`, and `--help` should continue to show the same top-level help intentionally.
 
 ### Auto mode is convenience, not fuzzy chaos
 
@@ -276,13 +276,14 @@ There is intentionally still no separate `validate` subcommand.
 
 The intended flow is:
 
-1. try `python mic_bridge.py`
-2. if auto mode stops with a handoff, run `list-devices`
-3. choose or pin device IDs
-4. run again
-5. stop with Ctrl+C after a quick smoke test
+1. run `python mic_bridge.py` to view top-level help
+2. choose the explicit workflow you want: `run` for live bridging or `list-devices` for discovery
+3. if `run` needs help choosing devices safely, run `list-devices`
+4. choose or pin device IDs
+5. run again with `python mic_bridge.py run ...`
+6. stop with Ctrl+C after a quick smoke test
 
-`list-devices` is still valuable, but it is no longer the only intended first-run path.
+`list-devices` is still the fallback discovery path when `run` cannot choose devices safely, but the no-argument invocation is now help-first rather than run-first.
 
 ### Linux/JACK block sizing is intentionally special
 
@@ -329,9 +330,9 @@ Even though the bridge writes to it as an output/playback device from PortAudio'
 
 ### Default invocation and `run`
 
-The default command flow is the run workflow.
+The default no-argument command flow is the top-level help screen.
 
-`run` does these things:
+The explicit `run` workflow does these things:
 
 1. resolve the model-native sample rate
 2. resolve explicit or auto-selected devices
@@ -389,7 +390,7 @@ If you are an AI assistant editing this repo:
 
 - do not collapse the code back into one file
 - do not replace straightforward code with many tiny wrappers
-- keep auto mode optimistic for convenience, but strict about outputs
+- keep auto mode strict about outputs when `run` is invoked, but do not make no-argument startup begin running implicitly
 - keep Ctrl+C and failed-run handoffs concise and traceback-free
 - keep Linux virtual mic auto-creation duplicate-aware and persistent, do not auto-unload it and do not stack extra copies when PortAudio still cannot use the existing target
 - if automatic model download still leaves the model unloadable, hand off to a manual `dpdfnet download <model>` rather than adding retries or hidden cleanup

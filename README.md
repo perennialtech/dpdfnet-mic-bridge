@@ -5,10 +5,12 @@ A command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire se
 The fast path is intentionally simple:
 
 ```text
-python mic_bridge.py
+python mic_bridge.py run
 ```
 
-The tool tries to auto-select a likely microphone input and a safe bridge-style output. If it cannot choose safely, it stops with a short handoff and `list-devices` becomes the fallback discovery workflow.
+Running `python mic_bridge.py` now shows top-level help instead of starting the bridge.
+
+Use `python mic_bridge.py run` for the live bridge. That command tries to auto-select a likely microphone input and a safe bridge-style output. If it cannot choose safely, it stops with a short handoff and `list-devices` becomes the fallback discovery workflow.
 
 This tool turns a physical microphone into a cleaned virtual microphone by running DPDFNet in real time and writing the enhanced audio into a virtual audio endpoint.
 
@@ -36,7 +38,7 @@ The real implementation lives in `mic_bridge_app/`:
 
 ```text
 mic_bridge.py                  thin entry point
-mic_bridge_app/app.py          top-level CLI dispatch, no-subcommand defaulting
+mic_bridge_app/app.py          top-level CLI dispatch and command execution
 mic_bridge_app/cli.py          argparse parser and help text
 mic_bridge_app/constants.py    static configuration and platform constants
 mic_bridge_app/dependencies.py optional import wrappers
@@ -60,7 +62,7 @@ Included:
 - real-time DPDFNet enhancement via `dpdfnet.StreamEnhancer`
 - automatic device selection when it can be done safely
 - numeric device ID pinning when auto mode needs help
-- recommended first-run auto path, with `list-devices` as the fallback discovery flow
+- explicit `run` command for the live bridge, with `list-devices` as the fallback discovery flow
 - Windows and Linux/PipeWire-oriented behavior
 
 Explicit non-goals:
@@ -114,14 +116,14 @@ If that automatic download is interrupted, or if the local model files look part
 4. Start the bridge:
 
    ```text
-   python mic_bridge.py
+   python mic_bridge.py run
    ```
 
 5. If auto mode needs help, fall back to discovery and pin the IDs it shows:
 
    ```text
    python mic_bridge.py list-devices
-   python mic_bridge.py --input 18 --output 16
+   python mic_bridge.py run --input 18 --output 16
    ```
 
    where:
@@ -141,7 +143,7 @@ Windows note:
 2. Start the bridge:
 
    ```text
-   python mic_bridge.py
+   python mic_bridge.py run
    ```
 
 3. If no likely virtual mic target is visible and `--output` was omitted, the app tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`.
@@ -157,7 +159,7 @@ Windows note:
    Then pin IDs explicitly if needed:
 
    ```text
-   python mic_bridge.py --input 18 --output 16
+   python mic_bridge.py run --input 18 --output 16
    ```
 
 5. If you prefer to create the Linux virtual mic target yourself, use this exact command:
@@ -180,6 +182,9 @@ Fast path, auto-selected when safe:
 
 ```text
 python mic_bridge.py
+# shows help
+
+python mic_bridge.py run
 ```
 
 Fallback device discovery:
@@ -191,15 +196,18 @@ python mic_bridge.py list-devices
 Pinned manual run:
 
 ```text
-python mic_bridge.py --input 18 --output 16
+python mic_bridge.py run --input 18 --output 16
 ```
 
 You can also run the internal package entry point directly:
 
 ```text
 python -m mic_bridge_app
+# shows help
+
+python -m mic_bridge_app run
 python -m mic_bridge_app list-devices
-python -m mic_bridge_app --input 18 --output 16
+python -m mic_bridge_app run --input 18 --output 16
 ```
 
 ## Important behavior notes
@@ -219,6 +227,8 @@ python -m mic_bridge_app --input 18 --output 16
 - The bridge output is enhanced mono, but output channel negotiation prefers stereo first so Linux virtual sinks do not accidentally become left-only.
 - If the chosen model appears to be missing locally, the run path tries one automatic download and then continues or fails fast.
 - If the automatic model download is interrupted or still leaves the model unloadable, rerun `dpdfnet download <model>` manually once and then retry.
+- `python mic_bridge.py` and `python -m mic_bridge_app` now show top-level help when no subcommand is provided.
+- Use the explicit `run` subcommand for the live bridge workflow.
 - `list-devices` remains available as the fallback discovery and manual pinning workflow.
 
 ## Developer note

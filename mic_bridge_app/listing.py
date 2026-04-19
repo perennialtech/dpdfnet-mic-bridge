@@ -69,7 +69,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
 
     if system == "Windows":
         print("Windows usage notes:")
-        print("  - Fast path: try python mic_bridge.py first.")
+        print("  - Fast path: try python mic_bridge.py run first.")
         print(
             "  - Auto mode only picks likely bridge outputs such as VB-CABLE 'CABLE Input',"
         )
@@ -88,7 +88,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
             f"  - Probe results above show whether a device can open at {samplerate} Hz."
         )
         print(
-            "  - If auto mode stops, use the IDs above with python mic_bridge.py --input <id> --output <id>."
+            "  - If auto mode stops, use the IDs above with python mic_bridge.py run --input <id> --output <id>."
         )
         print("  - Version 0 intentionally has no separate 'validate' command.")
         print("    Use the run path and stop it with Ctrl+C as the quick smoke test.")
@@ -97,7 +97,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
 
     if system == "Linux":
         print("Linux PipeWire usage notes:")
-        print("  - Fast path: try python mic_bridge.py first.")
+        print("  - Fast path: try python mic_bridge.py run first.")
         print("  - This script uses the PortAudio host APIs exposed by sounddevice.")
         print(
             "  - On PipeWire systems, prefer a real 'PipeWire' host API if your PortAudio build has one,"
@@ -160,7 +160,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
             )
             print(f"      {format_jack_block_ms_hints(samplerate)} ms")
         print(
-            "  - If auto mode stops, use the IDs above with python mic_bridge.py --input <id> --output <id>."
+            "  - If auto mode stops, use the IDs above with python mic_bridge.py run --input <id> --output <id>."
         )
         print("  - Version 0 intentionally has no separate 'validate' command.")
         print("    Use the run path and stop it with Ctrl+C as the quick smoke test.")
@@ -171,7 +171,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
     print(
         "  - This script is primarily intended for Windows 10/11 and Linux systems running PipeWire."
     )
-    print("  - Fast path: try python mic_bridge.py first.")
+    print("  - Fast path: try python mic_bridge.py run first.")
     print(f"  - Probe results above show whether a device can open at {samplerate} Hz.")
     print()
 
@@ -203,9 +203,9 @@ def list_devices_command(args: argparse.Namespace) -> int:
     )
 
     fast_path_command = (
-        "python mic_bridge.py"
+        "python mic_bridge.py run"
         if args.model == DEFAULT_MODEL
-        else f"python mic_bridge.py --model {args.model}"
+        else f"python mic_bridge.py run --model {args.model}"
     )
 
     print()

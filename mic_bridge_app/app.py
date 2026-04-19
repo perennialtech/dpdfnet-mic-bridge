@@ -1,10 +1,9 @@
 """
 Top-level CLI dispatch.
 
-Keep this file intentionally small. It owns parser construction, convenience
-defaulting to the `run` workflow when no subcommand is provided, command
-dispatch, and top-level error formatting. Command implementations live in
-`listing.py` and `runtime.py`.
+Keep this file intentionally small. It owns parser construction, light argv
+normalization for help and subcommands, command dispatch, and top-level error
+formatting. Command implementations live in `listing.py` and `runtime.py`.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from .listing import list_devices_command
 from .runtime import run_command
 
 _COMMAND_NAMES = frozenset({"list-devices", "run"})
+_HELP_FLAGS = frozenset({"-h", "--help"})
 
 
 def eprint(*args: object) -> None:
@@ -39,10 +39,10 @@ def _normalize_argv(argv: Optional[list[str]]) -> list[str]:
     raw_args = list(sys.argv[1:] if argv is None else argv)
 
     if not raw_args:
-        return ["run"]
+        return ["--help"]
 
     first = raw_args[0]
-    if first in _COMMAND_NAMES or first in {"-h", "--help"}:
+    if first in _COMMAND_NAMES or first in _HELP_FLAGS:
         return raw_args
 
     return ["run", *raw_args]
