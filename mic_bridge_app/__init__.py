@@ -8,6 +8,7 @@ Public entry points:
 When no subcommand is provided, the launcher shows top-level help.
 
 To run the live bridge explicitly, use the `run` subcommand.
+Run-specific flags belong after that subcommand.
 
 Before changing behavior, read `ARCHITECTURE.md`.
 """

@@ -40,7 +40,8 @@ mic_bridge_app/__main__.py
     Package entry points.
 
 mic_bridge_app/app.py
-    Top-level command dispatch, no-subcommand convenience behavior,
+    Top-level command dispatch, no-argument help behavior,
+    explicit-subcommand handoffs for run flags,
     and top-level error formatting.
 
 mic_bridge_app/cli.py
@@ -101,7 +102,7 @@ mic_bridge_app/runtime.py
 
 ## Code style guardrails
 
-These are intentionally explicit because future cleanup passes, including AI-driven ones, often make this kind of code worse by trying to make it look more abstract than it needs to be.
+These are intentionally explicit because future cleanup passes, including AI-driven ones, often make this kind of code worse by trying to make it look more abstract than it needs to.
 
 ### Keep policy centralized
 
@@ -199,6 +200,12 @@ Invoking `python mic_bridge.py` or `python -m mic_bridge_app` without a subcomma
 
 The explicit workflows remain `run` and `list-devices`, and `--help` should continue to show the same top-level help intentionally.
 
+Run-specific flags should stay attached to the explicit `run` subcommand.
+
+If a user types something like `python mic_bridge.py --input 18 --output 16`, hand off cleanly to the explicit form instead of silently inferring `run`.
+
+That keeps examples, pinned command suggestions, and argparse behavior aligned.
+
 ### Auto mode is convenience, not fuzzy chaos
 
 Auto mode is allowed to select devices, but only under explicit safety rules.
@@ -219,14 +226,19 @@ Version 0 is intentionally strict about cleanup and handoffs:
 - Ctrl+C during setup should exit cleanly without a traceback dump
 - failed stream opens should stop with a short, actionable handoff
 - repeated runs should not rely on hidden background state repair
+- if pinned numeric IDs stop working after a reboot, hotplug event, backend restart, or other device churn, hand off to `list-devices` instead of trying fuzzy name recovery
 - if a Linux virtual mic target was created, later runs should either reuse it or explain clearly why PortAudio still cannot use it
+- if a Linux virtual mic target was created during a failed run, mention that it remains in place rather than implying it was rolled back
 - do not add retry loops, auto-healing daemons, or broad cleanup logic just to hide environment problems
+- if an automatic model download is interrupted, exit cleanly and hand off to one manual `dpdfnet download <model>` rather than adding retries or hidden cleanup
 
 ### Manual IDs remain numeric
 
 Version 0 still uses numeric IDs for the explicit path.
 
 That keeps manual behavior concrete and easy to debug.
+
+Those numeric IDs are not promised to survive reboots, host-API changes, hotplug events, or audio-session churn. When they go stale, the fallback is to rerun `list-devices`, not to add fuzzy name-based repair.
 
 Auto mode may choose IDs internally, but when the user wants to pin a selection, the interface remains ID-based rather than fuzzy name lookup.
 
@@ -283,7 +295,7 @@ The intended flow is:
 5. run again with `python mic_bridge.py run ...`
 6. stop with Ctrl+C after a quick smoke test
 
-`list-devices` is still the fallback discovery path when `run` cannot choose devices safely, but the no-argument invocation is now help-first rather than run-first.
+`list-devices` is still the fallback discovery path when `run` cannot choose devices safely, but the no-argument invocation is help-first rather than run-first.
 
 ### Linux/JACK block sizing is intentionally special
 
@@ -390,9 +402,11 @@ If you are an AI assistant editing this repo:
 
 - do not collapse the code back into one file
 - do not replace straightforward code with many tiny wrappers
+- keep the explicit `run` subcommand explicit, do not silently infer it from bare run flags
 - keep auto mode strict about outputs when `run` is invoked, but do not make no-argument startup begin running implicitly
 - keep Ctrl+C and failed-run handoffs concise and traceback-free
 - keep Linux virtual mic auto-creation duplicate-aware and persistent, do not auto-unload it and do not stack extra copies when PortAudio still cannot use the existing target
+- if numeric IDs go stale across repeated runs, hand off to `list-devices` rather than adding fuzzy name matching or hidden device-repair logic
 - if automatic model download still leaves the model unloadable, hand off to a manual `dpdfnet download <model>` rather than adding retries or hidden cleanup
 - do not let auto mode silently route the bridge into speakers/headphones or monitor/source endpoints
 - keep Linux virtual mic auto-creation and model auto-download fail-fast and one-shot

@@ -5,7 +5,8 @@ This module owns:
 - resolving explicit and auto-selected devices into a concrete DeviceSelection
   and RunConfig
 - smooth handoffs when auto mode cannot choose safely
-- smooth handoffs around repeated runs, interrupted setup, and partial Linux target/model state
+- smooth handoffs around repeated runs, stale numeric IDs, interrupted setup,
+  and partial Linux target/model state
 - optional Linux virtual mic creation when output auto-selection needs it
 - optional one-shot model download when the chosen model is missing locally
 - printing the run summary
@@ -87,6 +88,40 @@ def _scan_all_device_probes(
         samplerate=sample_rate,
     )
     return input_probes, output_probes, hostapi_names
+
+
+def _get_current_run_device_info(*, device_id: int, role: str) -> dict:
+    """
+    Resolve a device ID against the current PortAudio device view.
+
+    Repeated runs can see numeric IDs move after reboots, hotplug events,
+    backend restarts, or other audio-session churn. When that happens, hand off
+    to `list-devices` instead of trying fuzzy name recovery.
+    """
+    if role not in {"input", "output"}:
+        raise ValueError(f"Unsupported device role '{role}'.")
+
+    try:
+        return get_device_info(device_id)
+    except ValueError as exc:
+        lines = [
+            f"Selected {role} device ID {device_id} is not currently available.",
+            "Device IDs can change between runs, after reboots, or after audio-session/device changes.",
+        ]
+
+        if platform.system() == "Windows" and role == "output":
+            lines.append(
+                "If you intend to bridge into VB-CABLE, make sure it is still installed and visible in Windows sound settings."
+            )
+
+        lines.extend(
+            [
+                "Next step:",
+                "  python mic_bridge.py list-devices",
+                f"Then re-run with a fresh --{role} <id>.",
+            ]
+        )
+        raise ValueError("\n".join(lines)) from exc
 
 
 def _candidate_input_hostapis(input_probes: list[DeviceProbe]) -> list[str]:
@@ -188,7 +223,7 @@ def _build_no_auto_output_handoff(
         )
 
     if system == "Linux":
-        extra_note = f"{virtual_mic_note}\n" if virtual_mic_note is not None else ""
+        extra_note = f"{virtual_mic_note}\n\n" if virtual_mic_note is not None else ""
 
         return (
             "Could not auto-select a bridge output.\n\n"
@@ -279,7 +314,15 @@ def _try_create_linux_virtual_mic_target() -> tuple[str, str | None]:
     if pactl_path is None:
         return "failed", "`pactl` was not found."
 
-    if _linux_virtual_mic_sink_exists(pactl_path) is True:
+    try:
+        sink_exists = _linux_virtual_mic_sink_exists(pactl_path)
+    except KeyboardInterrupt as exc:
+        raise KeyboardInterrupt(
+            f"Interrupted while checking for '{LINUX_VIRTUAL_MIC_DESCRIPTION}'.\n"
+            "If it already exists afterward, later runs can reuse it."
+        ) from exc
+
+    if sink_exists is True:
         return "already-exists", None
 
     command = shlex.split(linux_virtual_mic_command())
@@ -292,6 +335,11 @@ def _try_create_linux_virtual_mic_target() -> tuple[str, str | None]:
             capture_output=True,
             text=True,
         )
+    except KeyboardInterrupt as exc:
+        raise KeyboardInterrupt(
+            f"Interrupted while trying to create '{LINUX_VIRTUAL_MIC_DESCRIPTION}'.\n"
+            "If it appears afterward, later runs can reuse it."
+        ) from exc
     except OSError as exc:
         return "failed", str(exc)
 
@@ -337,6 +385,12 @@ def _download_dpdfnet_model_once(model_name: str) -> None:
 
     try:
         completed = subprocess.run(command, check=False)
+    except KeyboardInterrupt as exc:
+        raise KeyboardInterrupt(
+            "Interrupted during automatic model download.\n"
+            f"If the local model looks partial afterward, run this once manually, then retry:\n"
+            f"  {display_command}"
+        ) from exc
     except OSError as exc:
         raise RuntimeError(
             "Could not start the DPDFNet downloader.\n"
@@ -348,7 +402,6 @@ def _download_dpdfnet_model_once(model_name: str) -> None:
         raise RuntimeError(
             "Automatic model download did not finish successfully.\n"
             "If this was interrupted or left partial local model state, run this once manually, then try again:\n"
-            f"Run this once manually, then try again:\n"
             f"  {display_command}"
         )
 
@@ -373,6 +426,17 @@ def _build_stream_enhancer(dpdfnet_mod, *, model_name: str, verbose: bool):
             f"  dpdfnet download {model_name}\n"
             f"Details: {_first_line(str(exc)) or exc}"
         ) from exc
+
+
+def _persistent_linux_target_handoff_text(config: RunConfig) -> str | None:
+    if platform.system() != "Linux" or not config.linux_virtual_mic_was_created:
+        return None
+
+    return (
+        f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created and left in place.\n"
+        "Later runs can reuse it, but if it still does not appear in list-devices,\n"
+        "fix the PortAudio host-API side instead of creating another copy."
+    )
 
 
 def _resolve_run_device_ids(
@@ -449,13 +513,15 @@ def _resolve_run_device_ids(
 
         if status == "created":
             linux_virtual_mic_was_created = True
-            virtual_mic_note = f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created, but PortAudio still does not expose it as a usable output device."
+            virtual_mic_note = f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created and left in place, but PortAudio still does not expose it as a usable output device."
             return
 
         virtual_mic_note = f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' already exists in PipeWire/PulseAudio, but PortAudio still does not expose it as a usable output device. Not creating another copy."
 
     if requested_input_id is not None and requested_output_id is None:
-        input_info = get_device_info(requested_input_id)
+        input_info = _get_current_run_device_info(
+            device_id=requested_input_id, role="input"
+        )
         input_hostapi = hostapi_name_for_device(input_info, hostapi_names)
 
         output_probe = choose_best_auto_output(
@@ -496,7 +562,9 @@ def _resolve_run_device_ids(
         )
 
     if requested_input_id is None and requested_output_id is not None:
-        output_info = get_device_info(requested_output_id)
+        output_info = _get_current_run_device_info(
+            device_id=requested_output_id, role="output"
+        )
         output_hostapi = hostapi_name_for_device(output_info, hostapi_names)
 
         input_probe = choose_best_auto_input(
@@ -581,8 +649,12 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
 
     _, hostapi_names = query_audio_inventory()
 
-    input_info = get_device_info(selection.input_device_id)
-    output_info = get_device_info(selection.output_device_id)
+    input_info = _get_current_run_device_info(
+        device_id=selection.input_device_id, role="input"
+    )
+    output_info = _get_current_run_device_info(
+        device_id=selection.output_device_id, role="output"
+    )
 
     if int(input_info["max_input_channels"]) < 1:
         raise ValueError(
@@ -910,6 +982,10 @@ def run_command(args: argparse.Namespace) -> int:
         ):
             print("Streaming.")
             print("Press Ctrl+C to stop.")
+            print(
+                "If you stop during setup work such as model download, the app exits cleanly"
+            )
+            print("and will hand off if any manual follow-up is needed.")
             print()
             while True:
                 time.sleep(0.5)
@@ -919,21 +995,35 @@ def run_command(args: argparse.Namespace) -> int:
         print("Stopping bridge...")
     except Exception as exc:
         if fatal_callback_error:
-            raise RuntimeError(
-                "The audio callback aborted unexpectedly.\n"
-                "Try the bridge again. If it repeats, re-run:\n"
-                "  python mic_bridge.py list-devices\n"
-                "and consider a different device pair or block size."
-            ) from fatal_callback_error[0]
+            lines = ["The audio callback aborted unexpectedly."]
+            detail = _first_line(str(fatal_callback_error[0]))
+            if detail is not None:
+                lines.append(f"Details: {detail}")
+            linux_target_note = _persistent_linux_target_handoff_text(config)
+            if linux_target_note is not None:
+                lines.append(linux_target_note)
+            lines.extend(
+                [
+                    "Try the bridge again. If it repeats, re-run:",
+                    "  python mic_bridge.py list-devices",
+                    "and consider a different device pair or block size.",
+                ]
+            )
+            raise RuntimeError("\n".join(lines)) from fatal_callback_error[0]
 
         detail = _first_line(str(exc)) or str(exc)
-        raise RuntimeError(
-            "Failed to open or run the audio stream.\n"
-            f"Details: {detail}\n"
-            "If the devices changed, disappeared, or became busy, re-run:\n"
-            "  python mic_bridge.py list-devices\n"
-            "and pin fresh IDs if needed."
-        ) from exc
+        lines = ["Failed to open or run the audio stream.", f"Details: {detail}"]
+        linux_target_note = _persistent_linux_target_handoff_text(config)
+        if linux_target_note is not None:
+            lines.append(linux_target_note)
+        lines.extend(
+            [
+                "If the devices changed, disappeared, or became busy, re-run:",
+                "  python mic_bridge.py list-devices",
+                "and pin fresh IDs if needed.",
+            ]
+        )
+        raise RuntimeError("\n".join(lines)) from exc
 
     nonzero_status_lines = status_counter.nonzero_lines()
     if nonzero_status_lines:

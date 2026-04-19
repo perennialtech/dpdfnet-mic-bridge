@@ -2,8 +2,9 @@
 Top-level CLI dispatch.
 
 Keep this file intentionally small. It owns parser construction, light argv
-normalization for help and subcommands, command dispatch, and top-level error
-formatting. Command implementations live in `listing.py` and `runtime.py`.
+normalization for no-argument help and explicit-subcommand handoffs, command
+dispatch, and top-level error formatting. Command implementations live in
+`listing.py` and `runtime.py`.
 """
 
 from __future__ import annotations
@@ -45,7 +46,15 @@ def _normalize_argv(argv: Optional[list[str]]) -> list[str]:
     if first in _COMMAND_NAMES or first in _HELP_FLAGS:
         return raw_args
 
-    return ["run", *raw_args]
+    if first.startswith("-"):
+        raise ValueError(
+            "Use the explicit 'run' subcommand for live-bridge flags.\n"
+            "Examples:\n"
+            "  python mic_bridge.py run\n"
+            "  python mic_bridge.py run --input 18 --output 16"
+        )
+
+    return raw_args
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -60,7 +69,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             return run_command(args)
     except KeyboardInterrupt:
         eprint()
-        eprint("Interrupted.")
+        text = str(sys.exc_info()[1]).strip("\n")
+        if text:
+            for line in text.splitlines():
+                eprint(line)
+        else:
+            eprint("Interrupted.")
         eprint()
         return 130
     except Exception as exc:

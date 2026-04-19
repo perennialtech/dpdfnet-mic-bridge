@@ -6,7 +6,8 @@ Implementation details are kept in `mic_bridge_app/` so CLI parsing, device
 probing, runtime audio behavior, and architectural rationale can stay
 separated.
 
-Running without arguments now shows top-level help instead of defaulting to the
+Running without arguments shows top-level help.
+Live-bridge flags belong under the explicit `run` subcommand instead of defaulting to the
 `run` workflow.
 
 Read `README.md` for user guidance and `ARCHITECTURE.md` before changing code

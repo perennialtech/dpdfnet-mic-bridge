@@ -713,7 +713,7 @@ def build_run_command_suggestion(
     output_id: int,
     model_name: str,
 ) -> str:
-    parts = ["python", "mic_bridge.py"]
+    parts = ["python", "mic_bridge.py", "run"]
 
     if model_name != DEFAULT_MODEL:
         parts.extend(["--model", model_name])

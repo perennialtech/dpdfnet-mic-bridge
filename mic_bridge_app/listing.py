@@ -90,6 +90,10 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
         print(
             "  - If auto mode stops, use the IDs above with python mic_bridge.py run --input <id> --output <id>."
         )
+        print(
+            "  - Pinned numeric IDs may change after reboots or device churn. If a previously"
+        )
+        print("    working ID stops working, rerun list-devices and pin fresh IDs.")
         print("  - Version 0 intentionally has no separate 'validate' command.")
         print("    Use the run path and stop it with Ctrl+C as the quick smoke test.")
         print()
@@ -140,7 +144,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
             f"  - In apps, first try choosing '{LINUX_VIRTUAL_MIC_DESCRIPTION}' directly as the microphone."
         )
         print(
-            "    If a given app does not expose it directly, try the matching monitor/source instead."
+            "    If a given app does not list it directly, try the matching monitor/source instead."
         )
         if hostapi_filter == "jack":
             auto_frames = recommended_linux_jack_block_frames(samplerate)
@@ -162,6 +166,10 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
         print(
             "  - If auto mode stops, use the IDs above with python mic_bridge.py run --input <id> --output <id>."
         )
+        print(
+            "  - Pinned numeric IDs may change after reboots or backend/device churn. If a previously"
+        )
+        print("    working ID stops working, rerun list-devices and pin fresh IDs.")
         print("  - Version 0 intentionally has no separate 'validate' command.")
         print("    Use the run path and stop it with Ctrl+C as the quick smoke test.")
         print()
@@ -173,6 +181,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
     )
     print("  - Fast path: try python mic_bridge.py run first.")
     print(f"  - Probe results above show whether a device can open at {samplerate} Hz.")
+    print("  - If pinned IDs stop working after device churn, rerun list-devices.")
     print()
 
 

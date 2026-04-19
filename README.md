@@ -8,9 +8,15 @@ The fast path is intentionally simple:
 python mic_bridge.py run
 ```
 
-Running `python mic_bridge.py` now shows top-level help instead of starting the bridge.
+Running `python mic_bridge.py` shows top-level help instead of starting the bridge.
 
 Use `python mic_bridge.py run` for the live bridge. That command tries to auto-select a likely microphone input and a safe bridge-style output. If it cannot choose safely, it stops with a short handoff and `list-devices` becomes the fallback discovery workflow.
+
+Run-specific flags belong after the explicit `run` subcommand, for example:
+
+```text
+python mic_bridge.py run --input 18 --output 16
+```
 
 This tool turns a physical microphone into a cleaned virtual microphone by running DPDFNet in real time and writing the enhanced audio into a virtual audio endpoint.
 
@@ -148,7 +154,7 @@ Windows note:
 
 3. If no likely virtual mic target is visible and `--output` was omitted, the app tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`.
 
-   If that succeeds, the target is left in place for later runs. If it already exists but PortAudio still cannot use it, the app hands off instead of trying to create duplicate copies.
+   If that succeeds, the target is left in place for later runs. If it is created but PortAudio still cannot use it immediately, the app stops cleanly, leaves the target in place, and later runs can reuse it once PortAudio exposes it. If it already exists but PortAudio still cannot use it, the app hands off instead of trying to create duplicate copies.
 
 4. If auto mode still needs help, use fallback discovery:
 
@@ -187,6 +193,8 @@ python mic_bridge.py
 python mic_bridge.py run
 ```
 
+Run-specific flags belong after the explicit `run` subcommand.
+
 Fallback device discovery:
 
 ```text
@@ -223,12 +231,14 @@ python -m mic_bridge_app run --input 18 --output 16
 - On Linux, if `--output` is omitted and no likely virtual mic target is visible, the run path tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`.
 - If that Linux target is created automatically, it is left in place for later runs rather than being auto-unloaded on exit.
 - If the recommended Linux target already exists but PortAudio still cannot use it, the run path hands off instead of trying to create duplicate copies.
+- Pinned numeric device IDs are concrete but may change after reboots, driver restarts, or audio-session/device churn. If a previously working ID stops working, rerun `python mic_bridge.py list-devices` and pin fresh IDs.
 - On Linux/JACK, omitting `--block-ms` intentionally chooses a friendlier exact frame size than raw 10.0 ms.
 - The bridge output is enhanced mono, but output channel negotiation prefers stereo first so Linux virtual sinks do not accidentally become left-only.
 - If the chosen model appears to be missing locally, the run path tries one automatic download and then continues or fails fast.
 - If the automatic model download is interrupted or still leaves the model unloadable, rerun `dpdfnet download <model>` manually once and then retry.
-- `python mic_bridge.py` and `python -m mic_bridge_app` now show top-level help when no subcommand is provided.
+- `python mic_bridge.py` and `python -m mic_bridge_app` show top-level help when no subcommand is provided.
 - Use the explicit `run` subcommand for the live bridge workflow.
+- Run-specific flags belong after `run`, for example `python mic_bridge.py run --input 18 --output 16`.
 - `list-devices` remains available as the fallback discovery and manual pinning workflow.
 
 ## Developer note
