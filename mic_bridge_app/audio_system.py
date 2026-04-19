@@ -86,13 +86,13 @@ def query_audio_inventory():
                 "and if you plan to bridge into VB-CABLE, install it beforehand outside this script."
             )
         elif system == "Linux":
-            guidance = (
-                "PortAudio could not enumerate Linux audio devices. Make sure your audio session is running and that your PortAudio build can see the expected PipeWire, PulseAudio, JACK, or ALSA backend."
-            )
+            guidance = "PortAudio could not enumerate Linux audio devices. Make sure your audio session is running and that your PortAudio build can see the expected PipeWire, PulseAudio, JACK, or ALSA backend."
         else:
             guidance = "PortAudio could not enumerate audio devices on this system."
 
-        raise RuntimeError(f"Could not query audio devices.\n{guidance}\nDetails: {detail}") from exc
+        raise RuntimeError(
+            f"Could not query audio devices.\n{guidance}\nDetails: {detail}"
+        ) from exc
 
     return devices, hostapi_names
 

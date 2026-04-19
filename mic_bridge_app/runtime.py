@@ -449,14 +449,10 @@ def _resolve_run_device_ids(
 
         if status == "created":
             linux_virtual_mic_was_created = True
-            virtual_mic_note = (
-                f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created, but PortAudio still does not expose it as a usable output device."
-            )
+            virtual_mic_note = f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created, but PortAudio still does not expose it as a usable output device."
             return
 
-        virtual_mic_note = (
-            f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' already exists in PipeWire/PulseAudio, but PortAudio still does not expose it as a usable output device. Not creating another copy."
-        )
+        virtual_mic_note = f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' already exists in PipeWire/PulseAudio, but PortAudio still does not expose it as a usable output device. Not creating another copy."
 
     if requested_input_id is not None and requested_output_id is None:
         input_info = get_device_info(requested_input_id)
