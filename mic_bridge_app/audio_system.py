@@ -3,7 +3,8 @@ Platform-audio policy and device probing helpers.
 
 This module owns the rules that depend on PortAudio host APIs, sounddevice
 device metadata, and backend-specific stream behavior, especially Windows
-WASAPI preferences and Linux/PipeWire/JACK handling.
+WASAPI preferences, Linux/PipeWire/JACK handling, and the candidate policy used
+by auto-selection.
 
 Keep user-facing workflow text in `listing.py` and `runtime.py`. Keep parser
 definition in `cli.py`. This file should focus on reusable audio-system logic.
@@ -558,18 +559,35 @@ def format_probe_openability(probe: DeviceProbe, samplerate: int) -> str:
     return f"opens@{samplerate}={probe.open_channels}ch"
 
 
-def is_likely_physical_mic_input(probe: DeviceProbe) -> bool:
+def is_viable_auto_input_candidate(probe: DeviceProbe) -> bool:
+    """
+    Inputs for auto mode are intentionally broad enough to catch many physical
+    interfaces whose names do not literally contain "microphone", while still
+    excluding obvious loopbacks, monitors, and bridge endpoints.
+    """
     tags = set(probe.tags)
     return (
         probe.direction == "input"
         and probe.open_channels is not None
-        and "mic" in tags
         and "virtual" not in tags
         and "monitor" not in tags
         and "dpdfnet" not in tags
         and "vb-cable-recording" not in tags
         and "vb-cable-playback" not in tags
     )
+
+
+def choose_best_auto_input(
+    input_probes: list[DeviceProbe],
+    *,
+    hostapi_name: str | None = None,
+) -> DeviceProbe | None:
+    for probe in input_probes:
+        if hostapi_name is not None and probe.hostapi_name != hostapi_name:
+            continue
+        if is_viable_auto_input_candidate(probe):
+            return probe
+    return None
 
 
 def is_likely_virtual_bridge_output(probe: DeviceProbe) -> bool:
@@ -581,12 +599,33 @@ def is_likely_virtual_bridge_output(probe: DeviceProbe) -> bool:
     )
 
 
+def choose_best_auto_output(
+    output_probes: list[DeviceProbe],
+    *,
+    hostapi_name: str | None = None,
+) -> DeviceProbe | None:
+    for probe in output_probes:
+        if hostapi_name is not None and probe.hostapi_name != hostapi_name:
+            continue
+        if is_likely_virtual_bridge_output(probe):
+            return probe
+    return None
+
+
 def suggest_run_pair(
     input_probes: list[DeviceProbe],
     output_probes: list[DeviceProbe],
 ) -> tuple[DeviceProbe, DeviceProbe] | None:
+    """
+    Suggest the pair that auto mode would be happiest to use.
+
+    Inputs are allowed to be broad physical-looking capture devices, but
+    outputs remain deliberately strict. We only suggest bridge-style outputs
+    here, never speakers/headphones, because that is the same safety boundary
+    used by auto mode itself.
+    """
     likely_inputs = [
-        probe for probe in input_probes if is_likely_physical_mic_input(probe)
+        probe for probe in input_probes if is_viable_auto_input_candidate(probe)
     ]
     likely_outputs = [
         probe for probe in output_probes if is_likely_virtual_bridge_output(probe)
@@ -605,21 +644,7 @@ def suggest_run_pair(
                 best_pair = (input_probe, output_probe)
                 best_score = score
 
-    if best_pair is not None:
-        return best_pair
-
-    viable_inputs = [probe for probe in input_probes if probe.open_channels is not None]
-    viable_outputs = [
-        probe for probe in output_probes if probe.open_channels is not None
-    ]
-
-    if len(viable_inputs) == 1 and len(viable_outputs) == 1:
-        only_input = viable_inputs[0]
-        only_output = viable_outputs[0]
-        if only_input.hostapi_name == only_output.hostapi_name:
-            return only_input, only_output
-
-    return None
+    return best_pair
 
 
 def build_run_command_suggestion(
@@ -628,17 +653,18 @@ def build_run_command_suggestion(
     output_id: int,
     model_name: str,
 ) -> str:
-    parts = [
-        "python",
-        "mic_bridge.py",
-        "run",
-        "--input",
-        str(input_id),
-        "--output",
-        str(output_id),
-    ]
+    parts = ["python", "mic_bridge.py"]
 
     if model_name != DEFAULT_MODEL:
         parts.extend(["--model", model_name])
+
+    parts.extend(
+        [
+            "--input",
+            str(input_id),
+            "--output",
+            str(output_id),
+        ]
+    )
 
     return " ".join(parts)

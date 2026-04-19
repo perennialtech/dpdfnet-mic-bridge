@@ -22,20 +22,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire setups.\n"
-            "Use 'list-devices' first, then 'run' with numeric device IDs.\n"
-            "On Linux, PipeWire is reached through the PortAudio host APIs exposed by sounddevice,\n"
-            "usually PipeWire directly if available, otherwise PulseAudio, JACK, or ALSA.\n"
-            "For Linux/PipeWire virtual mic targets, the recommended creation command is:\n"
+            "Running with no subcommand defaults to the 'run' workflow.\n"
+            "The fast path is usually just:\n"
+            "  python mic_bridge.py\n"
+            "Auto mode tries to choose a safe microphone input and a bridge-style output.\n"
+            "On Linux, if --output is omitted and no likely virtual mic target is visible,\n"
+            "the run command tries to create:\n"
             f"  {linux_virtual_mic_command()}\n"
-            "Version 0 intentionally has no separate 'validate' subcommand,\n"
-            "use 'run' as the quick smoke-test path."
+            "On Windows, VB-CABLE still needs to be installed outside the script.\n"
+            "Use 'list-devices' when you want to inspect, pin, or troubleshoot device IDs.\n"
+            "Version 0 intentionally has no separate 'validate' subcommand."
         ),
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=(
             "Examples:\n"
+            "  python mic_bridge.py\n"
+            "  python mic_bridge.py --input 18 --output 16\n"
             "  python mic_bridge.py list-devices\n"
-            "  python mic_bridge.py run --input 18 --output 16\n"
-            "  python -m mic_bridge_app list-devices\n"
+            "  python -m mic_bridge_app\n"
         ),
     )
 
@@ -43,12 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser(
         "list-devices",
-        help=(
-            "List recommended audio devices and probe whether they open at the selected sample rate."
-        ),
+        help="Inspect devices and pin numeric IDs when auto mode needs help.",
         formatter_class=argparse.RawTextHelpFormatter,
         description=(
-            "List audio devices in a platform-friendly way.\n"
+            "Fallback device discovery for the mic bridge.\n"
+            "The usual fast path is to try 'python mic_bridge.py' first.\n"
             "On Windows, the default view is filtered to WASAPI because that is the\n"
             "recommended starting point for this bridge.\n"
             "On Linux, the default view prefers a PipeWire host API if your PortAudio\n"
@@ -92,24 +95,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser(
         "run",
-        help="Run the live microphone -> DPDFNet -> output-device bridge.",
+        help="Run the live bridge, auto-selecting devices when safely possible.",
         formatter_class=argparse.RawTextHelpFormatter,
+        description=(
+            "Run the live microphone -> DPDFNet -> output-device bridge.\n"
+            "If --input and/or --output are omitted, the command tries to auto-select them.\n"
+            "Auto-output selection is intentionally strict and will not silently pick\n"
+            "speakers or headphones as the bridge output."
+        ),
     )
     run_parser.add_argument(
         "--input",
         type=int,
-        required=True,
-        help="Numeric input device ID, typically your physical microphone.",
+        required=False,
+        help=(
+            "Numeric input device ID.\n"
+            "If omitted, the command tries to auto-select a likely physical microphone."
+        ),
     )
     run_parser.add_argument(
         "--output",
         type=int,
-        required=True,
+        required=False,
         help=(
             "Numeric output device ID.\n"
-            "Windows with VB-CABLE: usually the playback endpoint named 'CABLE Input'.\n"
-            "Linux/PipeWire: usually the virtual mic target created with:\n"
-            f"  {linux_virtual_mic_command()}\n"
+            "If omitted, the command tries to auto-select a likely bridge output.\n"
+            "Windows: typically the VB-CABLE playback endpoint named 'CABLE Input'.\n"
+            "Linux/PipeWire: a likely virtual mic target, creating the recommended one\n"
+            "automatically if none is visible and pactl is available.\n"
         ),
     )
     run_parser.add_argument(

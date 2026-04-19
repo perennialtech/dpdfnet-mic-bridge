@@ -41,11 +41,14 @@ class RunConfig:
     input_hostapi_name: str
     input_channels: int
     input_tags: tuple[str, ...]
+    input_was_auto_selected: bool
     output_device_id: int
     output_device_name: str
     output_hostapi_name: str
     output_channels: int
     output_tags: tuple[str, ...]
+    output_was_auto_selected: bool
+    linux_virtual_mic_was_created: bool
     latency: str
 
 

@@ -2,7 +2,10 @@
 Implementation of the `run` command.
 
 This module owns:
-- resolving a concrete RunConfig
+- resolving explicit and auto-selected devices into a concrete RunConfig
+- smooth handoffs when auto mode cannot choose safely
+- optional Linux virtual mic creation when output auto-selection needs it
+- optional one-shot model download when the chosen model is missing locally
 - printing the run summary
 - constructing the StreamEnhancer
 - opening the duplex sounddevice stream
@@ -21,33 +24,478 @@ from __future__ import annotations
 
 import argparse
 import platform
+import shlex
+import shutil
+import subprocess
 import sys
 import time
 
 import numpy as np
 
 from .audio_system import (
+    build_device_probes,
+    choose_best_auto_input,
+    choose_best_auto_output,
     format_jack_block_ms_hints,
     get_device_info,
     get_hostapi_names,
     hostapi_filter_key_for_name,
     hostapi_name_for_device,
     infer_device_tags,
+    is_likely_virtual_bridge_output,
     is_power_of_two,
+    is_viable_auto_input_candidate,
     jack_block_ms_for_frames,
+    linux_virtual_mic_command,
     negotiate_stream_channels,
     recommended_linux_jack_block_frames,
     resolve_effective_block_size,
     same_hostapi_guidance,
+    suggest_run_pair,
 )
-from .constants import DEFAULT_BLOCK_MS
+from .constants import DEFAULT_BLOCK_MS, LINUX_VIRTUAL_MIC_DESCRIPTION
 from .dependencies import require_dpdfnet, require_sounddevice
-from .domain import AudioFifo, CallbackStatusCounter, RunConfig
+from .domain import AudioFifo, CallbackStatusCounter, DeviceProbe, RunConfig
 from .modeling import resolve_stream_sample_rate
 
 
 def _eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
+
+
+def _scan_all_device_probes(
+    sample_rate: int,
+) -> tuple[list[DeviceProbe], list[DeviceProbe], list[str]]:
+    sd_mod = require_sounddevice()
+    devices = sd_mod.query_devices()
+    hostapi_names = get_hostapi_names(sd_mod)
+    input_probes, output_probes = build_device_probes(
+        devices=devices,
+        hostapi_names=hostapi_names,
+        hostapi_filter="all",
+        samplerate=sample_rate,
+    )
+    return input_probes, output_probes, hostapi_names
+
+
+def _candidate_input_hostapis(input_probes: list[DeviceProbe]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+
+    for probe in input_probes:
+        if not is_viable_auto_input_candidate(probe):
+            continue
+        if probe.hostapi_name not in seen:
+            seen.add(probe.hostapi_name)
+            names.append(probe.hostapi_name)
+
+    return names
+
+
+def _bridge_output_hostapis(output_probes: list[DeviceProbe]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+
+    for probe in output_probes:
+        if not is_likely_virtual_bridge_output(probe):
+            continue
+        if probe.hostapi_name not in seen:
+            seen.add(probe.hostapi_name)
+            names.append(probe.hostapi_name)
+
+    return names
+
+
+def _first_line(text: str | None) -> str | None:
+    if text is None:
+        return None
+
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    line = stripped.splitlines()[0]
+    if len(line) > 180:
+        return line[:177] + "..."
+    return line
+
+
+def _build_no_auto_input_handoff(
+    *,
+    sample_rate: int,
+    output_hostapi_name: str | None,
+    input_probes: list[DeviceProbe],
+) -> str:
+    visible_input_hostapis = _candidate_input_hostapis(input_probes)
+
+    if output_hostapi_name is not None and visible_input_hostapis:
+        return (
+            "Could not auto-select a microphone input that matches the chosen output host API.\n\n"
+            f"Chosen output host API: {output_hostapi_name}\n"
+            f"Visible microphone-like inputs use: {', '.join(visible_input_hostapis)}\n"
+            "Next step:\n"
+            "  python mic_bridge.py list-devices\n"
+            "Then re-run with --input <id> and --output <id>."
+        )
+
+    return (
+        "Could not auto-select a microphone input.\n\n"
+        f"No likely microphone input opened at {sample_rate} Hz.\n"
+        "Next step:\n"
+        "  python mic_bridge.py list-devices\n"
+        "Then re-run with --input <id> and --output <id>."
+    )
+
+
+def _build_no_auto_output_handoff(
+    *,
+    input_hostapi_name: str | None,
+    output_probes: list[DeviceProbe],
+    create_attempted: bool,
+    create_error: str | None,
+) -> str:
+    visible_bridge_hostapis = _bridge_output_hostapis(output_probes)
+
+    if input_hostapi_name is not None and visible_bridge_hostapis:
+        return (
+            "Could not auto-select a bridge output that matches the chosen input host API.\n\n"
+            f"Chosen input host API: {input_hostapi_name}\n"
+            f"Visible bridge outputs use: {', '.join(visible_bridge_hostapis)}\n"
+            "Next step:\n"
+            "  python mic_bridge.py list-devices\n"
+            "Then re-run with matching IDs."
+        )
+
+    system = platform.system()
+
+    if system == "Windows":
+        return (
+            "Could not auto-select a bridge output.\n\n"
+            "Auto mode only picks a likely virtual bridge target such as VB-CABLE 'CABLE Input', never speakers/headphones.\n"
+            "Install and configure VB-CABLE first, then run:\n"
+            "  python mic_bridge.py list-devices\n"
+            "and re-run with --output <id> or with both --input <id> and --output <id>."
+        )
+
+    if system == "Linux":
+        creation_line = ""
+        detail = _first_line(create_error)
+        if create_attempted and detail is not None:
+            creation_line = f"Automatic creation attempt: {detail}\n"
+        elif create_attempted:
+            creation_line = (
+                f"I tried to create '{LINUX_VIRTUAL_MIC_DESCRIPTION}' automatically, "
+                "but it did not become usable.\n"
+            )
+
+        return (
+            "Could not auto-select a bridge output.\n\n"
+            "Auto mode only picks a likely virtual mic target, never speakers/headphones.\n"
+            f"{creation_line}"
+            "Next step:\n"
+            "  python mic_bridge.py list-devices\n"
+            "If needed, create it manually with:\n"
+            f"  {linux_virtual_mic_command()}"
+        )
+
+    return (
+        "Could not auto-select a bridge output.\n\n"
+        "Auto mode only picks likely bridge-style outputs, not ordinary speakers/headphones.\n"
+        "Next step:\n"
+        "  python mic_bridge.py list-devices\n"
+        "Then re-run with --output <id> or with both --input <id> and --output <id>."
+    )
+
+
+def _build_no_auto_pair_handoff(
+    *,
+    sample_rate: int,
+    input_probes: list[DeviceProbe],
+    output_probes: list[DeviceProbe],
+    create_attempted: bool,
+    create_error: str | None,
+) -> str:
+    visible_input_hostapis = _candidate_input_hostapis(input_probes)
+    visible_bridge_hostapis = _bridge_output_hostapis(output_probes)
+
+    if not visible_input_hostapis:
+        return _build_no_auto_input_handoff(
+            sample_rate=sample_rate,
+            output_hostapi_name=None,
+            input_probes=input_probes,
+        )
+
+    if not visible_bridge_hostapis:
+        return _build_no_auto_output_handoff(
+            input_hostapi_name=None,
+            output_probes=output_probes,
+            create_attempted=create_attempted,
+            create_error=create_error,
+        )
+
+    return (
+        "Could not auto-match a microphone input and bridge output on the same host API.\n\n"
+        f"Visible microphone-like inputs use: {', '.join(visible_input_hostapis)}\n"
+        f"Visible bridge outputs use: {', '.join(visible_bridge_hostapis)}\n"
+        "Next step:\n"
+        "  python mic_bridge.py list-devices\n"
+        "Then re-run with matching IDs."
+    )
+
+
+def _try_create_linux_virtual_mic_target() -> tuple[bool, str | None]:
+    command = shlex.split(linux_virtual_mic_command())
+
+    if shutil.which("pactl") is None:
+        return False, "`pactl` was not found."
+
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return False, str(exc)
+
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        if not detail:
+            detail = f"`pactl` exited with status {completed.returncode}."
+        return False, detail
+
+    time.sleep(0.35)
+    return True, None
+
+
+def _looks_like_missing_model_error(exc: BaseException, model_name: str) -> bool:
+    text = f"{type(exc).__name__}: {exc}".casefold()
+    missing_markers = (
+        "not found",
+        "missing",
+        "no such file",
+        "does not exist",
+        "could not find",
+        "cannot find",
+        "download",
+    )
+    model_markers = (
+        model_name.casefold(),
+        "model",
+        ".onnx",
+    )
+
+    return any(marker in text for marker in missing_markers) and any(
+        marker in text for marker in model_markers
+    )
+
+
+def _download_dpdfnet_model_once(model_name: str) -> None:
+    display_command = f"dpdfnet download {model_name}"
+    cli_path = shutil.which("dpdfnet")
+    command = (
+        [cli_path, "download", model_name]
+        if cli_path is not None
+        else [sys.executable, "-m", "dpdfnet", "download", model_name]
+    )
+
+    print(f"Model '{model_name}' is not available locally, downloading it once...")
+
+    try:
+        completed = subprocess.run(command, check=False)
+    except OSError as exc:
+        raise RuntimeError(
+            "Could not start the DPDFNet downloader.\n"
+            f"Run this once manually, then try again:\n"
+            f"  {display_command}"
+        ) from exc
+
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "Automatic model download failed.\n"
+            f"Run this once manually, then try again:\n"
+            f"  {display_command}"
+        )
+
+    print("Download finished, loading the model...")
+
+
+def _build_stream_enhancer(dpdfnet_mod, *, model_name: str, verbose: bool):
+    try:
+        return dpdfnet_mod.StreamEnhancer(model=model_name, verbose=verbose)
+    except Exception as exc:
+        if not _looks_like_missing_model_error(exc, model_name):
+            raise
+
+    _download_dpdfnet_model_once(model_name)
+
+    try:
+        return dpdfnet_mod.StreamEnhancer(model=model_name, verbose=verbose)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Model '{model_name}' could not be loaded after the automatic download: {exc}"
+        ) from exc
+
+
+def _resolve_run_device_ids(
+    *,
+    sample_rate: int,
+    requested_input_id: int | None,
+    requested_output_id: int | None,
+) -> tuple[int, int, bool, bool, bool]:
+    """
+    Resolve explicit and auto-selected device IDs.
+
+    Auto-selection policy is intentionally asymmetric:
+    - inputs may pick a broad physical-looking mic candidate
+    - outputs remain strict and must look like bridge targets
+    - on Linux, omitting --output allows one automatic pactl creation attempt
+      if no likely bridge-style output is visible at all
+    """
+    if requested_input_id is not None and requested_output_id is not None:
+        return requested_input_id, requested_output_id, False, False, False
+
+    input_probes, output_probes, hostapi_names = _scan_all_device_probes(sample_rate)
+    linux_virtual_mic_was_created = False
+    create_attempted = False
+    create_error: str | None = None
+
+    def maybe_create_linux_virtual_mic() -> None:
+        nonlocal input_probes
+        nonlocal output_probes
+        nonlocal hostapi_names
+        nonlocal linux_virtual_mic_was_created
+        nonlocal create_attempted
+        nonlocal create_error
+
+        if platform.system() != "Linux" or requested_output_id is not None:
+            return
+
+        if any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+            return
+
+        create_attempted = True
+        print(
+            f"No likely virtual mic target is visible, trying to create '{LINUX_VIRTUAL_MIC_DESCRIPTION}' automatically..."
+        )
+        created, error = _try_create_linux_virtual_mic_target()
+        if not created:
+            create_error = error
+            return
+
+        linux_virtual_mic_was_created = True
+        input_probes, output_probes, hostapi_names = _scan_all_device_probes(
+            sample_rate
+        )
+
+        if any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+            print(
+                f"Created Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}'."
+            )
+        else:
+            create_error = "The target did not become visible through PortAudio."
+
+    if requested_input_id is not None and requested_output_id is None:
+        input_info = get_device_info(requested_input_id)
+        input_hostapi = hostapi_name_for_device(input_info, hostapi_names)
+
+        output_probe = choose_best_auto_output(
+            output_probes,
+            hostapi_name=input_hostapi,
+        )
+        if output_probe is not None:
+            return (
+                requested_input_id,
+                output_probe.device_id,
+                False,
+                True,
+                linux_virtual_mic_was_created,
+            )
+
+        if not any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+            maybe_create_linux_virtual_mic()
+            input_hostapi = hostapi_name_for_device(input_info, hostapi_names)
+            output_probe = choose_best_auto_output(
+                output_probes,
+                hostapi_name=input_hostapi,
+            )
+            if output_probe is not None:
+                return (
+                    requested_input_id,
+                    output_probe.device_id,
+                    False,
+                    True,
+                    linux_virtual_mic_was_created,
+                )
+
+        raise ValueError(
+            _build_no_auto_output_handoff(
+                input_hostapi_name=input_hostapi,
+                output_probes=output_probes,
+                create_attempted=create_attempted,
+                create_error=create_error,
+            )
+        )
+
+    if requested_input_id is None and requested_output_id is not None:
+        output_info = get_device_info(requested_output_id)
+        output_hostapi = hostapi_name_for_device(output_info, hostapi_names)
+
+        input_probe = choose_best_auto_input(
+            input_probes,
+            hostapi_name=output_hostapi,
+        )
+        if input_probe is not None:
+            return (
+                input_probe.device_id,
+                requested_output_id,
+                True,
+                False,
+                linux_virtual_mic_was_created,
+            )
+
+        raise ValueError(
+            _build_no_auto_input_handoff(
+                sample_rate=sample_rate,
+                output_hostapi_name=output_hostapi,
+                input_probes=input_probes,
+            )
+        )
+
+    suggested_pair = suggest_run_pair(input_probes, output_probes)
+    if suggested_pair is not None:
+        input_probe, output_probe = suggested_pair
+        return (
+            input_probe.device_id,
+            output_probe.device_id,
+            True,
+            True,
+            linux_virtual_mic_was_created,
+        )
+
+    if not any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+        maybe_create_linux_virtual_mic()
+        suggested_pair = suggest_run_pair(input_probes, output_probes)
+        if suggested_pair is not None:
+            input_probe, output_probe = suggested_pair
+            return (
+                input_probe.device_id,
+                output_probe.device_id,
+                True,
+                True,
+                linux_virtual_mic_was_created,
+            )
+
+    raise ValueError(
+        _build_no_auto_pair_handoff(
+            sample_rate=sample_rate,
+            input_probes=input_probes,
+            output_probes=output_probes,
+            create_attempted=create_attempted,
+            create_error=create_error,
+        )
+    )
 
 
 def _build_run_config(args: argparse.Namespace) -> RunConfig:
@@ -60,15 +508,42 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     - channel counts are negotiated conservatively, but input/output use
       different preference orders for practical reasons
     - Linux/JACK block sizing auto-adjusts when `--block-ms` is omitted
+    - auto mode may resolve omitted devices, but output auto-selection remains
+      deliberately stricter than input auto-selection
     """
     sd_mod = require_sounddevice()
 
     sample_rate = resolve_stream_sample_rate(args.model, args.samplerate, context="run")
 
+    requested_input_id = None if args.input is None else int(args.input)
+    requested_output_id = None if args.output is None else int(args.output)
+
+    (
+        input_device_id,
+        output_device_id,
+        input_was_auto_selected,
+        output_was_auto_selected,
+        linux_virtual_mic_was_created,
+    ) = _resolve_run_device_ids(
+        sample_rate=sample_rate,
+        requested_input_id=requested_input_id,
+        requested_output_id=requested_output_id,
+    )
+
     hostapi_names = get_hostapi_names(sd_mod)
 
-    input_info = get_device_info(args.input)
-    output_info = get_device_info(args.output)
+    input_info = get_device_info(input_device_id)
+    output_info = get_device_info(output_device_id)
+
+    if int(input_info["max_input_channels"]) < 1:
+        raise ValueError(
+            f"Selected input device {input_device_id} exposes no input channels: {input_info['name']}"
+        )
+
+    if int(output_info["max_output_channels"]) < 1:
+        raise ValueError(
+            f"Selected output device {output_device_id} exposes no output channels: {output_info['name']}"
+        )
 
     input_hostapi = hostapi_name_for_device(input_info, hostapi_names)
     output_hostapi = hostapi_name_for_device(output_info, hostapi_names)
@@ -76,8 +551,8 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     if int(input_info["hostapi"]) != int(output_info["hostapi"]):
         raise ValueError(
             "Input and output devices must use the same host API in Version 0.\n"
-            f"Input : id={args.input}, hostapi={input_hostapi}, name={input_info['name']}\n"
-            f"Output: id={args.output}, hostapi={output_hostapi}, name={output_info['name']}\n"
+            f"Input : id={input_device_id}, hostapi={input_hostapi}, name={input_info['name']}\n"
+            f"Output: id={output_device_id}, hostapi={output_hostapi}, name={output_info['name']}\n"
             f"{same_hostapi_guidance()}"
         )
 
@@ -89,13 +564,13 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
     )
 
     input_channels = negotiate_stream_channels(
-        device_id=args.input,
+        device_id=input_device_id,
         direction="input",
         samplerate=sample_rate,
         dtype="float32",
     )
     output_channels = negotiate_stream_channels(
-        device_id=args.output,
+        device_id=output_device_id,
         direction="output",
         samplerate=sample_rate,
         dtype="float32",
@@ -111,16 +586,19 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
         requested_block_ms=requested_block_ms,
         block_policy=block_policy,
         block_size=block_size,
-        input_device_id=int(args.input),
+        input_device_id=input_device_id,
         input_device_name=input_name,
         input_hostapi_name=input_hostapi,
         input_channels=input_channels,
         input_tags=infer_device_tags(input_name),
-        output_device_id=int(args.output),
+        input_was_auto_selected=input_was_auto_selected,
+        output_device_id=output_device_id,
         output_device_name=output_name,
         output_hostapi_name=output_hostapi,
         output_channels=output_channels,
         output_tags=infer_device_tags(output_name),
+        output_was_auto_selected=output_was_auto_selected,
+        linux_virtual_mic_was_created=linux_virtual_mic_was_created,
         latency=str(args.latency),
     )
 
@@ -164,6 +642,19 @@ def _print_run_summary(config: RunConfig) -> None:
     print(f"Output channels open : {config.output_channels}")
     print()
     print("Notes:")
+
+    if config.input_was_auto_selected and config.output_was_auto_selected:
+        print("  - Input and output were auto-selected.")
+    elif config.input_was_auto_selected:
+        print("  - Input was auto-selected.")
+    elif config.output_was_auto_selected:
+        print("  - Output was auto-selected.")
+
+    if config.linux_virtual_mic_was_created:
+        print(
+            f"  - The Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created automatically for this run."
+        )
+
     print(
         "  - First enhanced output arrives after roughly one full model window (~20 ms)."
     )
@@ -275,8 +766,9 @@ def run_command(args: argparse.Namespace) -> int:
 
     print("Preparing DPDFNet model...")
     model_start = time.perf_counter()
-    enhancer = dpdfnet_mod.StreamEnhancer(
-        model=config.model_name,
+    enhancer = _build_stream_enhancer(
+        dpdfnet_mod,
+        model_name=config.model_name,
         verbose=bool(args.verbose),
     )
     model_elapsed = time.perf_counter() - model_start

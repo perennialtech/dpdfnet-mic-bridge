@@ -2,6 +2,14 @@
 
 A command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire setups.
 
+The fast path is intentionally simple:
+
+```text
+python mic_bridge.py
+```
+
+The tool tries to auto-select a likely microphone input and a safe bridge-style output. If it cannot choose safely, it stops with a short handoff and `list-devices` becomes the fallback discovery workflow.
+
 This tool turns a physical microphone into a cleaned virtual microphone by running DPDFNet in real time and writing the enhanced audio into a virtual audio endpoint.
 
 Typical signal flows:
@@ -28,15 +36,15 @@ The real implementation lives in `mic_bridge_app/`:
 
 ```text
 mic_bridge.py                  thin entry point
-mic_bridge_app/app.py          top-level CLI dispatch and error handling
+mic_bridge_app/app.py          top-level CLI dispatch, no-subcommand defaulting
 mic_bridge_app/cli.py          argparse parser and help text
 mic_bridge_app/constants.py    static configuration and platform constants
 mic_bridge_app/dependencies.py optional import wrappers
 mic_bridge_app/domain.py       data models and small callback-safe helpers
 mic_bridge_app/modeling.py     model/sample-rate policy
-mic_bridge_app/audio_system.py device probing, host API policy, block-size policy
-mic_bridge_app/listing.py      list-devices workflow
-mic_bridge_app/runtime.py      run workflow and live audio callback
+mic_bridge_app/audio_system.py device probing, host API policy, auto-selection policy, block-size policy
+mic_bridge_app/listing.py      fallback discovery and ID-pinning workflow
+mic_bridge_app/runtime.py      auto-selection, Linux target creation, model loading, live stream runtime
 ARCHITECTURE.md                future-maintainer and future-AI handoff notes
 ```
 
@@ -50,8 +58,9 @@ Included:
 
 - command-line-only workflow
 - real-time DPDFNet enhancement via `dpdfnet.StreamEnhancer`
-- numeric device ID selection
-- recommended first-run device listing and probing
+- automatic device selection when it can be done safely
+- numeric device ID pinning when auto mode needs help
+- recommended first-run auto path, with `list-devices` as the fallback discovery flow
 - Windows and Linux/PipeWire-oriented behavior
 
 Explicit non-goals:
@@ -65,6 +74,7 @@ Explicit non-goals:
 - timed run mode
 - native PipeWire graph management
 - packaging into an `.exe`
+- automatic VB-CABLE installation on Windows
 
 ## Dependencies
 
@@ -86,43 +96,67 @@ Or with plain `pip`:
 pip install numpy sounddevice dpdfnet
 ```
 
-You must also download the DPDFNet model you want to use. The recommended model is:
-
-```text
-dpdfnet8_48khz_hr
-```
-
-Download it once:
+You can pre-download the recommended model if you want:
 
 ```text
 dpdfnet download dpdfnet8_48khz_hr
 ```
+
+If the selected model is missing when you start the bridge, the run path tries one automatic download and then continues or fails fast.
 
 ## Quick start on Windows
 
 1. Install VB-CABLE.
 2. Set your physical microphone and VB-CABLE to 48 kHz in Windows sound settings.
 3. Install dependencies.
-4. Download the model:
+4. Start the bridge:
+
    ```text
-   dpdfnet download dpdfnet8_48khz_hr
+   python mic_bridge.py
    ```
-5. List recommended devices:
+
+5. If auto mode needs help, fall back to discovery and pin the IDs it shows:
+
    ```text
    python mic_bridge.py list-devices
+   python mic_bridge.py --input 18 --output 16
    ```
-6. Start the bridge:
-   ```text
-   python mic_bridge.py run --input 18 --output 16
-   ```
+
    where:
    - `--input` is your real microphone device ID
    - `--output` is the VB-CABLE playback endpoint, usually `CABLE Input`
-7. In Discord, OBS, or your game, choose the VB-CABLE recording endpoint, usually `CABLE Output`, as the microphone.
+
+6. In Discord, OBS, or your game, choose the VB-CABLE recording endpoint, usually `CABLE Output`, as the microphone.
+
+Windows note:
+
+- VB-CABLE must already be installed outside this script.
+- Auto mode will not silently pick speakers or headphones as the bridge output.
 
 ## Quick start on Linux with PipeWire
 
-1. Create a virtual mic target:
+1. Install dependencies.
+2. Start the bridge:
+
+   ```text
+   python mic_bridge.py
+   ```
+
+3. If no likely virtual mic target is visible and `--output` was omitted, the app tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`.
+
+4. If auto mode still needs help, use fallback discovery:
+
+   ```text
+   python mic_bridge.py list-devices
+   ```
+
+   Then pin IDs explicitly if needed:
+
+   ```text
+   python mic_bridge.py --input 18 --output 16
+   ```
+
+5. If you prefer to create the Linux virtual mic target yourself, use this exact command:
 
    ```text
    pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
@@ -132,48 +166,36 @@ dpdfnet download dpdfnet8_48khz_hr
    - `media.class=Audio/Source/Virtual` improves discoverability in many apps
    - `channels=1 channel_map=mono` keeps the target explicitly mono and avoids left/right mapping surprises
 
-2. Install dependencies.
-3. Download the model:
-   ```text
-   dpdfnet download dpdfnet8_48khz_hr
-   ```
-4. List recommended devices:
-   ```text
-   python mic_bridge.py list-devices
-   ```
-5. Start the bridge:
-
-   ```text
-   python mic_bridge.py run --input 18 --output 16
-   ```
-
-   where:
-   - `--input` is your physical microphone device ID
-   - `--output` is the virtual mic target playback/output device ID
-
 6. In Discord, OBS, or your app:
    - first try selecting `DPDFNet_Mic` directly as the microphone
    - if the app does not expose it directly, try the matching monitor/source instead
 
 ## Command overview
 
-List devices:
+Fast path, auto-selected when safe:
+
+```text
+python mic_bridge.py
+```
+
+Fallback device discovery:
 
 ```text
 python mic_bridge.py list-devices
 ```
 
-Run the bridge:
+Pinned manual run:
 
 ```text
-python mic_bridge.py run --input 18 --output 16
+python mic_bridge.py --input 18 --output 16
 ```
 
 You can also run the internal package entry point directly:
 
 ```text
+python -m mic_bridge_app
 python -m mic_bridge_app list-devices
-python -m mic_bridge_app run --input 18 --output 16
+python -m mic_bridge_app --input 18 --output 16
 ```
 
 ## Important behavior notes
@@ -183,11 +205,16 @@ python -m mic_bridge_app run --input 18 --output 16
 - The recommended model `dpdfnet8_48khz_hr` therefore expects 48,000 Hz.
 - The bridge uses a single full-duplex `sounddevice.Stream`.
 - Input and output must belong to the same PortAudio host API.
+- Auto mode is intentionally strict about outputs, it only auto-selects likely bridge-style outputs and will not silently pick speakers/headphones.
+- On Windows, VB-CABLE must already exist before the script is started.
+- On Linux, if `--output` is omitted and no likely virtual mic target is visible, the run path tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`.
 - On Linux/JACK, omitting `--block-ms` intentionally chooses a friendlier exact frame size than raw 10.0 ms.
 - The bridge output is enhanced mono, but output channel negotiation prefers stereo first so Linux virtual sinks do not accidentally become left-only.
+- If the chosen model appears to be missing locally, the run path tries one automatic download and then continues or fails fast.
+- `list-devices` remains available as the fallback discovery and manual pinning workflow.
 
 ## Developer note
 
 This repo intentionally carries design rationale forward in `ARCHITECTURE.md` so future humans and future AI sessions do not have to rediscover why Version 0 made certain choices.
 
-If you change stream topology, block sizing, device negotiation, or Linux virtual mic behavior, update `ARCHITECTURE.md` in the same change.
+If you change auto-selection policy, output strictness, Linux virtual mic creation behavior, model loading flow, stream topology, block sizing, or Linux virtual mic behavior, update `ARCHITECTURE.md` in the same change.

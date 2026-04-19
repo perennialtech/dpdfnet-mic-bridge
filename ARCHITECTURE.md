@@ -15,8 +15,8 @@ Those boundaries are:
 - dependency loading
 - model/sample-rate policy
 - sounddevice and PortAudio host-API policy
-- device probing and scoring
-- live runtime configuration
+- device probing, scoring, and auto-selection candidate policy
+- live runtime configuration and smooth user handoffs
 - the callback itself
 - long-form architectural rationale
 
@@ -40,7 +40,8 @@ mic_bridge_app/__main__.py
     Package entry points.
 
 mic_bridge_app/app.py
-    Top-level command dispatch and top-level error formatting.
+    Top-level command dispatch, no-subcommand convenience behavior,
+    and top-level error formatting.
 
 mic_bridge_app/cli.py
     argparse parser creation only.
@@ -72,17 +73,22 @@ mic_bridge_app/audio_system.py
     - channel negotiation
     - device probing
     - scoring and run-pair suggestion
+    - auto-selection candidate policy
     - block-size policy, including Linux/JACK defaults
     - Linux virtual mic helper command
 
 mic_bridge_app/listing.py
-    The list-devices command, including platform-specific usage notes.
+    The list-devices command, used as the fallback discovery and pinning workflow.
 
 mic_bridge_app/runtime.py
     The run command:
+    - resolve explicit and auto-selected devices
+    - print short handoffs when auto mode cannot choose safely
+    - optionally create the recommended Linux virtual mic target
     - build RunConfig
     - print run summary
     - load StreamEnhancer
+    - do a one-shot automatic model download when the model looks missing
     - open the duplex stream
     - run the callback
     - print shutdown status summary
@@ -99,9 +105,9 @@ If a rule is platform-specific, device-selection-specific, or model-specific, ke
 Examples:
 
 - sample-rate compatibility belongs in `modeling.py`
-- host-API choice and probing rules belong in `audio_system.py`
+- host-API choice, probing rules, scoring, and auto-selection heuristics belong in `audio_system.py`
 - parser text belongs in `cli.py`
-- callback behavior belongs in `runtime.py`
+- automatic Linux virtual mic creation, one-shot model download, and callback behavior belong in `runtime.py`
 
 Do not scatter one policy across several files just to make individual functions shorter.
 
@@ -178,26 +184,80 @@ Recommended choices:
 - Windows: WASAPI
 - Linux on PipeWire desktops: PipeWire if exposed by the PortAudio build, otherwise PulseAudio, then JACK, then ALSA
 
-### Device selection remains numeric IDs
+### Default invocation drops into `run`
 
-Version 0 intentionally uses numeric IDs rather than fuzzy name lookup.
+This is deliberate UX policy.
 
-That keeps the behavior explicit and easier to debug.
+Invoking `python mic_bridge.py` or `python -m mic_bridge_app` without a subcommand should go straight into the live run path.
 
-`list-devices` may print hints and a likely first-run command, but actual selection remains ID-based.
+Top-level help still exists through `--help`, and `list-devices` still exists, but the default path is the run workflow.
 
-### `list-devices` is the discovery workflow
+### Auto mode is convenience, not fuzzy chaos
 
-There is intentionally no separate `validate` subcommand.
+Auto mode is allowed to select devices, but only under explicit safety rules.
+
+Important consequences:
+
+- auto-selected outputs must look like bridge outputs
+- auto mode must not silently route enhanced mic audio into speakers or headphones
+- if auto mode cannot choose safely, it should stop and give a short, actionable handoff rather than guessing
+
+Manual numeric IDs remain the explicit fallback.
+
+### Manual IDs remain numeric
+
+Version 0 still uses numeric IDs for the explicit path.
+
+That keeps manual behavior concrete and easy to debug.
+
+Auto mode may choose IDs internally, but when the user wants to pin a selection, the interface remains ID-based rather than fuzzy name lookup.
+
+### Windows still requires VB-CABLE to be installed outside the script
+
+Do not teach the script to install VB-CABLE.
+
+Auto mode may find and use a VB-CABLE-style output if it is already present, but Windows virtual-cable setup remains a prerequisite outside the script.
+
+### Linux may try to create the recommended virtual mic target automatically
+
+When `--output` is omitted on Linux and no likely bridge-style output is visible, `run` may try the recommended `pactl load-module ...` command once, then rescan.
+
+Keep that behavior fail-fast and concise:
+
+- one attempt
+- short user-facing message
+- no retry loop
+- no background daemon behavior
+- no graph-management ambitions
+
+If the target still does not become usable, hand off cleanly.
+
+### A missing model may trigger one automatic download attempt
+
+If constructing `StreamEnhancer` fails in a way that looks like a missing local model, `run` may attempt one automatic `dpdfnet download <model>` and then try loading once more.
+
+Keep this narrow:
+
+- only when the failure looks like a missing model
+- one download attempt
+- no retry loop
+- no package-management sprawl
+
+If loading still fails after that, stop with a clear error.
+
+### `list-devices` is the fallback discovery workflow
+
+There is intentionally still no separate `validate` subcommand.
 
 The intended flow is:
 
-1. `list-devices`
-2. choose device IDs
-3. `run`
-4. stop with Ctrl+C after a quick smoke test
+1. try `python mic_bridge.py`
+2. if auto mode stops with a handoff, run `list-devices`
+3. choose or pin device IDs
+4. run again
+5. stop with Ctrl+C after a quick smoke test
 
-If a future change adds `validate`, treat that as an intentional CLI expansion.
+`list-devices` is still valuable, but it is no longer the only intended first-run path.
 
 ### Linux/JACK block sizing is intentionally special
 
@@ -242,6 +302,22 @@ Even though the bridge writes to it as an output/playback device from PortAudio'
 
 ## Command flow
 
+### Default invocation and `run`
+
+The default command flow is the run workflow.
+
+`run` does these things:
+
+1. resolve the model-native sample rate
+2. resolve explicit or auto-selected devices
+3. on Linux, optionally try to create the recommended virtual mic target if output auto-selection needs it
+4. validate same-host-API and device/channel assumptions
+5. resolve effective block size and negotiated channel counts
+6. print a summary so the user can spot mistakes before audio starts
+7. load `StreamEnhancer`, optionally doing one automatic model download if the model looks missing
+8. open one duplex stream and run the callback
+9. print callback underflow/overflow summary on shutdown
+
 ### `list-devices`
 
 `list-devices` does four things:
@@ -249,29 +325,19 @@ Even though the bridge writes to it as an output/playback device from PortAudio'
 1. resolves the model-native sample rate
 2. chooses a platform-friendly default host API filter
 3. probes devices for openability at that sample rate
-4. prints a likely first-run command when a good pair is obvious
+4. prints a likely pinned command when a good pair is obvious
 
-It is intentionally optimized for first-run usability instead of being a raw device dump.
-
-### `run`
-
-`run` does five things:
-
-1. validates the selected devices and host APIs
-2. resolves effective block size and negotiated channel counts
-3. prints a summary so the user can spot mistakes before audio starts
-4. opens one duplex stream and runs the callback
-5. prints callback underflow/overflow summary on shutdown
+It is intentionally optimized for fallback discovery and explicit pinning, not for being a raw device dump.
 
 ## Where to edit for common changes
 
 If you want to change parser flags or help text, edit `mic_bridge_app/cli.py`.
 
-If you want to change host-API defaults, device tagging, channel probing, device scoring, or Linux/JACK block policy, edit `mic_bridge_app/audio_system.py`.
+If you want to change host-API defaults, device tagging, channel probing, device scoring, strict auto-output rules, or Linux/JACK block policy, edit `mic_bridge_app/audio_system.py`.
 
 If you want to change what `list-devices` prints, edit `mic_bridge_app/listing.py`.
 
-If you want to change stream setup, callback logic, or run summaries, edit `mic_bridge_app/runtime.py`.
+If you want to change auto-selection flow, Linux virtual mic creation attempts, model auto-download behavior, stream setup, callback logic, or run summaries, edit `mic_bridge_app/runtime.py`.
 
 If you want to add new shared structures, edit `mic_bridge_app/domain.py`.
 
@@ -289,6 +355,8 @@ If you add a new model or change native sample-rate policy, edit `mic_bridge_app
 - native PipeWire graph management
 - separate validate command
 - executable packaging
+- automatic Windows virtual-cable installation
+- silent speaker/headphone selection in auto-output mode
 
 ## Guidance for future AI sessions
 
@@ -296,7 +364,10 @@ If you are an AI assistant editing this repo:
 
 - do not collapse the code back into one file
 - do not replace straightforward code with many tiny wrappers
+- keep auto mode optimistic for convenience, but strict about outputs
+- do not let auto mode silently route the bridge into speakers/headphones
+- keep Linux virtual mic auto-creation and model auto-download fail-fast and one-shot
 - keep architecture rules and user docs aligned with the code
-- treat stream topology, sample-rate policy, and host-API policy as deliberate design choices unless the task explicitly asks to redesign them
+- treat stream topology, sample-rate policy, same-host-API policy, and strict auto-output policy as deliberate design choices unless the task explicitly asks to redesign them
 
 If you make behavior changes, update the docs in the same patch.
