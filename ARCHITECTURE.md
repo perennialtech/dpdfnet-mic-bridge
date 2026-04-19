@@ -50,6 +50,7 @@ mic_bridge_app/domain.py
     - DeviceProbe
     - DeviceSelection
     - RunConfig
+    - LinuxVirtualMicLease
     - AudioFifo
     - CallbackStatusCounter
 
@@ -78,13 +79,13 @@ mic_bridge_app/runtime.py
     The run command:
     - resolve explicit and auto-selected devices
     - print short handoffs when auto mode cannot choose safely
-    - optionally create the recommended Linux virtual mic target
+    - optionally create the recommended temporary Linux virtual mic target
     - build RunConfig
     - print run summary
     - load StreamEnhancer
     - do a one-shot automatic model download when the model looks missing
     - open the duplex stream
-    - keep interrupted/failed-run handoffs concise around persistent Linux target state
+    - keep interrupted/failed-run handoffs concise around temporary Linux target cleanup
     - run the callback
     - print shutdown status summary
 ```
@@ -130,7 +131,8 @@ Manual numeric IDs remain the explicit fallback.
 - Ctrl+C during setup exits cleanly without a traceback dump
 - failed stream opens stop with a short actionable handoff
 - if pinned IDs stop working, hand off to `list-devices` instead of fuzzy name recovery
-- if a Linux virtual mic target was created during a failed run, mention it remains in place
+- if a temporary Linux virtual mic target was created for the current run, unload it before exit
+- if that cleanup fails, hand off briefly with a manual unload command when possible
 - do not add retry loops, auto-healing daemons, or broad cleanup logic to hide environment problems
 - if automatic model download is interrupted, exit cleanly and hand off to manual `dpdfnet download <model>`
 
@@ -142,15 +144,17 @@ Numeric IDs are not promised to survive reboots, host-API changes, hotplug event
 
 Do not teach the script to install VB-CABLE. Auto mode may use an existing VB-CABLE-style output, but virtual-cable setup remains a prerequisite outside the script.
 
-### Linux virtual mic auto-creation is one-shot and persistent
+### Linux virtual mic auto-creation is one-shot and temporary
 
 When `--output` is omitted on Linux and no likely bridge-style output is visible, `run` may try `pactl load-module ...` once, then rescan. Keep that behavior:
 
 - one attempt, short message, no retry loop, no daemon behavior
 - duplicate-aware: if the target exists but PortAudio cannot use it, hand off instead of stacking copies
-- persistent: do not auto-unload on exit; a created target remains for later runs
+- temporary: if the current run created the target, unload it during normal shutdown and during failed/interrupted exits
+- ownership-aware: only unload the target created by the current run, never a pre-existing user-created target
+- if a temporary target was created but PortAudio still cannot use it, clean it up before handing off
 
-The recommended `pactl` command uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises.
+The recommended `pactl` command is still the manual fallback for users who want a reusable target between runs. It uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises.
 
 ### Model auto-download is one-shot
 
@@ -175,9 +179,11 @@ Input negotiation prefers mono. Output negotiation prefers 2 channels, then 1, t
 If a rule is platform-specific, device-selection-specific, or model-specific, keep it in the module that owns that policy. Do not scatter one policy across files to make individual functions shorter.
 
 - sample-rate compatibility: `modeling.py`
-- host-API choice, device tagging, bridge-output identification, probing, scoring, auto-selection: `audio_system.py`
-- parser text: `cli.py`
-- Linux target creation, model download, callback: `runtime.py`
+- host-API choice, device tagging, bridge-output identification, channel probing, device scoring, auto-output rules, Linux/JACK block policy: `audio_system.py`
+- `list-devices` output: `listing.py`
+- auto-selection flow, Linux target creation and cleanup, model download, stream setup, callback, run summaries: `runtime.py`
+- shared structures: `domain.py`
+- new models or sample-rate policy: `constants.py` and `modeling.py`
 
 ### Prefer direct code over helper sprawl
 
@@ -193,13 +199,14 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 
 1. resolve the model-native sample rate
 2. resolve explicit or auto-selected devices
-3. on Linux, optionally try to create the virtual mic target if output auto-selection needs it (duplicate-aware)
+3. on Linux, optionally try to create the temporary virtual mic target if output auto-selection needs it (duplicate-aware)
 4. validate same-host-API and device/channel assumptions
 5. resolve effective block size and negotiated channel counts
 6. print a summary so the user can spot mistakes before audio starts
 7. load `StreamEnhancer`, optionally doing one automatic model download
 8. open one duplex stream and run the callback
-9. print callback underflow/overflow summary on shutdown
+9. unload any temporary Linux virtual mic target created by this run
+10. print callback underflow/overflow summary on shutdown
 
 ### `list-devices`
 
@@ -240,12 +247,13 @@ If you are an AI assistant editing this repo:
 - do not replace straightforward code with many tiny wrappers
 - keep the explicit `run` subcommand explicit; do not silently infer it from bare run flags
 - keep auto mode strict about outputs; do not make no-argument startup begin running implicitly
+- keep Linux virtual mic auto-creation duplicate-aware and temporary, not persistent
+- if the current run created a Linux target, unload it on every exit path and leave pre-existing user-created targets alone
 - keep Ctrl+C and failed-run handoffs concise and traceback-free
-- keep Linux virtual mic auto-creation duplicate-aware and persistent
 - if numeric IDs go stale, hand off to `list-devices` rather than fuzzy matching
 - if automatic model download leaves the model unloadable, hand off to manual download
 - do not let auto mode silently route the bridge into speakers, headphones, or monitor/source endpoints
-- keep Linux target creation and model download fail-fast and one-shot
+- keep Linux target creation, cleanup, and model download fail-fast and one-shot
 - keep architecture rules and user docs aligned with the code
 - treat stream topology, sample-rate policy, same-host-API policy, strict auto-output policy, and bridge-output identification policy as deliberate design choices unless the task explicitly asks to redesign them
 

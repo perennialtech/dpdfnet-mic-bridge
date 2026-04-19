@@ -48,7 +48,7 @@ If the selected model is missing at startup, the run path tries one automatic do
 
 ## Quick start on Windows
 
-1. Install VB-CABLE.
+1. Install VB-CABLE beforehand. This script expects it to already exist, and never installs it for you.
 2. Set your physical microphone and VB-CABLE to 48 kHz in Windows sound settings.
 3. Install dependencies.
 4. Start the bridge:
@@ -77,22 +77,26 @@ If the selected model is missing at startup, the run path tries one automatic do
    python mic_bridge.py run
    ```
 
-3. If no likely virtual mic target is visible and `--output` was omitted, the app tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`. If that succeeds, the target is left in place for later runs. If PortAudio still cannot use it immediately, the app stops cleanly and later runs can reuse it once PortAudio exposes it.
+3. If no likely virtual mic target is visible and `--output` was omitted, the app tries to create a temporary `DPDFNet_Mic` target automatically with `pactl`. If PortAudio can use it, the bridge runs through it and removes it on exit. If PortAudio still cannot use it immediately, the app stops cleanly and removes the temporary target before handing off.
 
 4. If auto mode still needs help:
 
    ```text
    python mic_bridge.py list-devices
    python mic_bridge.py run --input 18 --output 16
+
+   If you want a Linux virtual mic target to keep showing up in `list-devices` between runs, create it manually first.
    ```
 
-5. If you prefer to create the Linux virtual mic target yourself:
+5. If you prefer a reusable Linux virtual mic target, create it yourself before running the bridge:
 
    ```text
    pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
    ```
 
    This form uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises.
+
+   A manually created target can keep showing up between runs until you unload it yourself or your audio session resets, unlike the run command's temporary auto-created target.
 
 6. In Discord, OBS, or your app, first try selecting `DPDFNet_Mic` directly as the microphone. If the app does not expose it, try the matching monitor/source instead.
 

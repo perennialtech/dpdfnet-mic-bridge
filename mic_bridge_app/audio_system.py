@@ -373,7 +373,8 @@ def same_hostapi_guidance() -> str:
 def linux_virtual_mic_command() -> str:
     """
     Return the recommended PipeWire/PulseAudio compatibility command used in the
-    Linux docs and usage notes.
+    Linux docs and usage notes, both for users who want a reusable manual
+    target and as the basis for the script's temporary auto-created one.
 
     This is intentionally very specific:
     - `media.class=Audio/Source/Virtual` improves discoverability in apps

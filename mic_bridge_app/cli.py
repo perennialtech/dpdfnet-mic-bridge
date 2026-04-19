@@ -27,8 +27,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  python mic_bridge.py run\n"
             "The run command can auto-select a safe microphone input and bridge-style output.\n"
             "On Linux, if 'run' is used without --output and no likely virtual mic target is visible,\n"
-            "the run command tries to create:\n"
+            "the run command tries to create a temporary target for that run:\n"
             f"  {linux_virtual_mic_command()}\n"
+            "If this script creates that Linux target, it removes it on exit.\n"
             "On Windows, VB-CABLE still needs to be installed outside the script.\n"
             "Use 'list-devices' when you want to inspect, pin, or troubleshoot device IDs.\n"
             "Version 0 intentionally has no separate 'validate' subcommand."
@@ -123,8 +124,9 @@ def build_parser() -> argparse.ArgumentParser:
             "Numeric output device ID.\n"
             "If omitted, the command tries to auto-select a likely bridge output.\n"
             "Windows: typically the VB-CABLE playback endpoint named 'CABLE Input'.\n"
-            "Linux/PipeWire: a likely virtual mic target, creating the recommended one\n"
-            "automatically if none is visible and pactl is available.\n"
+            "Linux/PipeWire: a likely virtual mic target, temporarily creating the\n"
+            "recommended one for the current run if none is visible and pactl is available.\n"
+            "That auto-created Linux target is removed on exit.\n"
         ),
     )
     run_parser.add_argument(

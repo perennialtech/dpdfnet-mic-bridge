@@ -35,7 +35,7 @@ class DeviceSelection:
     output_device_id: int
     input_was_auto_selected: bool
     output_was_auto_selected: bool
-    linux_virtual_mic_was_created: bool
+    linux_virtual_mic_was_auto_created: bool
 
 
 @dataclass(frozen=True)
@@ -58,8 +58,21 @@ class RunConfig:
     output_channels: int
     output_tags: tuple[str, ...]
     output_was_auto_selected: bool
-    linux_virtual_mic_was_created: bool
+    linux_virtual_mic_was_auto_created: bool
     latency: str
+
+
+@dataclass
+class LinuxVirtualMicLease:
+    """
+    Tracks a temporary Linux virtual mic module created for the current run.
+
+    Only modules created by this process belong here. Pre-existing user-created
+    targets stay outside this lease and must not be auto-unloaded.
+    """
+
+    module_id: int | None = None
+    pactl_path: str | None = None
 
 
 class AudioFifo:

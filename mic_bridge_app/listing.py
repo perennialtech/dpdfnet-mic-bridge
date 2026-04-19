@@ -116,16 +116,24 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
             "  - If --output is omitted and no likely virtual target is visible, the run path tries"
         )
         print(
-            f"    to create '{LINUX_VIRTUAL_MIC_DESCRIPTION}' automatically with pactl."
+            f"    to create a temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target automatically with pactl."
         )
         print(
-            f"  - If it creates '{LINUX_VIRTUAL_MIC_DESCRIPTION}', it leaves it in place for later runs."
+            f"  - If it creates that temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target, it removes it on exit"
         )
+        print("    and also removes it on failed/interrupted setup paths.")
+        print(
+            "  - If a temporary target is created but PortAudio still cannot use it as a"
+        )
+        print("    usable output, the run path removes it before handing off.")
         print(
             "  - If that target already exists but PortAudio still cannot use it, the run path"
         )
         print("    hands off instead of trying to stack duplicate copies.")
-        print("  - Recommended virtual mic target command:")
+        print(
+            "  - If you want a Linux virtual mic target to keep showing up between runs or in"
+        )
+        print("    list-devices, create it yourself with:")
         print(f"      {linux_virtual_mic_command()}")
         print("  - Why this form:")
         print(

@@ -1,0 +1,754 @@
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index d2c89ef..af2db6a 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -30,6 +30,7 @@ mic_bridge_app/dependencies.py
+     - DeviceProbe
+     - DeviceSelection
+     - RunConfig
++    - LinuxVirtualMicLease
+     - AudioFifo
+     - CallbackStatusCounter
+
+@@ -52,12 +53,12 @@ mic_bridge_app/runtime.py
+     - resolve explicit and auto-selected devices
+     - print short handoffs when auto mode cannot choose safely
+-    - optionally create the recommended Linux virtual mic target
++    - optionally create the recommended temporary Linux virtual mic target
+     - build RunConfig
+     - print run summary
+     - load StreamEnhancer
+     - do a one-shot automatic model download when the model looks missing
+     - open the duplex stream
+-    - keep interrupted/failed-run handoffs concise around persistent Linux target state
++    - keep interrupted/failed-run handoffs concise around temporary Linux target cleanup
+     - run the callback
+     - print shutdown status summary
+ ```
+@@ -114,7 +115,8 @@ Manual numeric IDs remain the explicit fallback.
+ - Ctrl+C during setup exits cleanly without a traceback dump
+ - failed stream opens stop with a short actionable handoff
+ - if pinned IDs stop working, hand off to `list-devices` instead of fuzzy name recovery
+-- if a Linux virtual mic target was created during a failed run, mention it remains in place
++- if a temporary Linux virtual mic target was created for the current run, unload it before exit
++- if that cleanup fails, hand off briefly with a manual unload command when possible
+ - do not add retry loops, auto-healing daemons, or broad cleanup logic to hide environment problems
+ - if automatic model download is interrupted, exit cleanly and hand off to manual `dpdfnet download <model>`
+
+@@ -129,15 +131,17 @@ Numeric IDs are not promised to survive reboots, host-API changes, hotplug even
+
+ Do not teach the script to install VB-CABLE. Auto mode may use an existing VB-CABLE-style output, but virtual-cable setup remains a prerequisite outside the script.
+
+-### Linux virtual mic auto-creation is one-shot and persistent
++### Linux virtual mic auto-creation is one-shot and temporary
+
+ When `--output` is omitted on Linux and no likely bridge-style output is visible, `run` may try `pactl load-module ...` once, then rescan. Keep that behavior:
+
+ - one attempt, short message, no retry loop, no daemon behavior
+ - duplicate-aware: if the target exists but PortAudio cannot use it, hand off instead of stacking copies
+-- persistent: do not auto-unload on exit; a created target remains for later runs
++- temporary: if the current run created the target, unload it during normal shutdown and during failed/interrupted exits
++- ownership-aware: only unload the target created by the current run, never a pre-existing user-created target
++- if a temporary target was created but PortAudio still cannot use it, clean it up before handing off
+
+-The recommended `pactl` command uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises.
++The recommended `pactl` command is still the manual fallback for users who want a reusable target between runs. It uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises.
+
+ ### Model auto-download is one-shot
+
+@@ -170,7 +174,7 @@ If a rule is platform-specific, device-selection-specific, or model-specific, k
+ - sample-rate compatibility: `modeling.py`
+ - host-API choice, device tagging, bridge-output identification, channel probing, device scoring, auto-output rules, Linux/JACK block policy: `audio_system.py`
+ - `list-devices` output: `listing.py`
+-- auto-selection flow, Linux target creation, model download, stream setup, callback, run summaries: `runtime.py`
++- auto-selection flow, Linux target creation and cleanup, model download, stream setup, callback, run summaries: `runtime.py`
+ - shared structures: `domain.py`
+ - new models or sample-rate policy: `constants.py` and `modeling.py`
+
+@@ -195,11 +199,12 @@ If a rule is platform-specific, device-selection-specific, or model-specific, k
+ 1. resolve the model-native sample rate
+ 2. resolve explicit or auto-selected devices
+-3. on Linux, optionally try to create the virtual mic target if output auto-selection needs it (duplicate-aware)
++3. on Linux, optionally try to create the temporary virtual mic target if output auto-selection needs it (duplicate-aware)
+ 4. validate same-host-API and device/channel assumptions
+ 5. resolve effective block size and negotiated channel counts
+ 6. print a summary so the user can spot mistakes before audio starts
+ 7. load `StreamEnhancer`, optionally doing one automatic model download
+ 8. open one duplex stream and run the callback
++9. unload any temporary Linux virtual mic target created by this run
+ 9. print callback underflow/overflow summary on shutdown
+
+ ### `list-devices`
+@@ -224,11 +229,12 @@ If you are an AI assistant editing this repo:
+ - do not replace straightforward code with many tiny wrappers
+ - keep the explicit `run` subcommand explicit; do not silently infer it from bare run flags
+ - keep auto mode strict about outputs; do not make no-argument startup begin running implicitly
++- keep Linux virtual mic auto-creation duplicate-aware and temporary, not persistent
++- if the current run created a Linux target, unload it on every exit path and leave pre-existing user-created targets alone
+ - keep Ctrl+C and failed-run handoffs concise and traceback-free
+-- keep Linux virtual mic auto-creation duplicate-aware and persistent
+ - if numeric IDs go stale, hand off to `list-devices` rather than fuzzy matching
+ - if automatic model download leaves the model unloadable, hand off to manual download
+ - do not let auto mode silently route the bridge into speakers, headphones, or monitor/source endpoints
+-- keep Linux target creation and model download fail-fast and one-shot
++- keep Linux target creation, cleanup, and model download fail-fast and one-shot
+ - keep architecture rules and user docs aligned with the code
+ - treat stream topology, sample-rate policy, same-host-API policy, strict auto-output policy, and bridge-output identification policy as deliberate design choices unless the task explicitly asks to redesign them
+
+diff --git a/README.md b/README.md
+index 7476162..7eb01c7 100644
+--- a/README.md
++++ b/README.md
+@@ -32,7 +32,7 @@ If the selected model is missing at startup, the run path tries one automatic d
+
+ ## Quick start on Windows
+
+-1. Install VB-CABLE.
++1. Install VB-CABLE beforehand. This script expects it to already exist, and never installs it for you.
+ 2. Set your physical microphone and VB-CABLE to 48 kHz in Windows sound settings.
+ 3. Install dependencies.
+ 4. Start the bridge:
+@@ -56,15 +56,17 @@ Linux with PipeWire:
+    python mic_bridge.py run
+    ```
+
+-3. If no likely virtual mic target is visible and `--output` was omitted, the app tries to create the recommended `DPDFNet_Mic` target automatically with `pactl`. If that succeeds, the target is left in place for later runs. If PortAudio still cannot use it immediately, the app stops cleanly and later runs can reuse it once PortAudio exposes it.
++3. If no likely virtual mic target is visible and `--output` was omitted, the app tries to create a temporary `DPDFNet_Mic` target automatically with `pactl`. If PortAudio can use it, the bridge runs through it and removes it on exit. If PortAudio still cannot use it immediately, the app stops cleanly and removes the temporary target before handing off.
+
+ 4. If auto mode still needs help:
+
+    ```text
+    python mic_bridge.py list-devices
+    python mic_bridge.py run --input 18 --output 16
++
++   If you want a Linux virtual mic target to keep showing up in `list-devices` between runs, create it manually first.
+    ```
+
+-5. If you prefer to create the Linux virtual mic target yourself:
++5. If you prefer a reusable Linux virtual mic target, create it yourself before running the bridge:
+
+    ```text
+    pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
+@@ -73,6 +75,8 @@ Linux with PipeWire:
+    This form uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises.
+
++   A manually created target can keep showing up between runs until you unload it yourself or your audio session resets, unlike the run command's temporary auto-created target.
++
+ 6. In Discord, OBS, or your app, first try selecting `DPDFNet_Mic` directly as the microphone. If the app does not expose it, try the matching monitor/source instead.
+
+ ## Command overview
+diff --git a/mic_bridge_app/audio_system.py b/mic_bridge_app/audio_system.py
+index e63f93f..a9c67a6 100644
+--- a/mic_bridge_app/audio_system.py
++++ b/mic_bridge_app/audio_system.py
+@@ -347,8 +347,8 @@ def same_hostapi_guidance() -> str:
+ def linux_virtual_mic_command() -> str:
+     """
+     Return the recommended PipeWire/PulseAudio compatibility command used in the
+-    Linux docs and usage notes.
+-
++    Linux docs and usage notes, both for users who want a reusable manual
++    target and as the basis for the script's temporary auto-created one.
+     This is intentionally very specific:
+     - `media.class=Audio/Source/Virtual` improves discoverability in apps
+     - `channels=1 channel_map=mono` keeps the target explicitly mono
+diff --git a/mic_bridge_app/cli.py b/mic_bridge_app/cli.py
+index 0a36454..0d47988 100644
+--- a/mic_bridge_app/cli.py
++++ b/mic_bridge_app/cli.py
+@@ -25,9 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
+             "Use the 'run' subcommand to start the live bridge:\n"
+             "  python mic_bridge.py run\n"
+             "The run command can auto-select a safe microphone input and bridge-style output.\n"
+-            "On Linux, if 'run' is used without --output and no likely virtual mic target is visible,\n"
+-            "the run command tries to create:\n"
++            "On Linux, if 'run' is used without --output and no likely virtual mic target is visible,\n"
++            "the run command tries to create a temporary target for that run:\n"
+             f"  {linux_virtual_mic_command()}\n"
++            "If this script creates that Linux target, it removes it on exit.\n"
+             "On Windows, VB-CABLE still needs to be installed outside the script.\n"
+             "Use 'list-devices' when you want to inspect, pin, or troubleshoot device IDs.\n"
+             "Version 0 intentionally has no separate 'validate' subcommand."
+@@ -104,8 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
+         help=(
+             "Numeric output device ID.\n"
+             "If omitted, the command tries to auto-select a likely bridge output.\n"
+-            "Windows: typically the VB-CABLE playback endpoint named 'CABLE Input'.\n"
+-            "Linux/PipeWire: a likely virtual mic target, creating the recommended one\n"
+-            "automatically if none is visible and pactl is available.\n"
++            "Windows: typically the VB-CABLE playback endpoint named 'CABLE Input'.\n"
++            "Linux/PipeWire: a likely virtual mic target, temporarily creating the\n"
++            "recommended one for the current run if none is visible and pactl is available.\n"
++            "That auto-created Linux target is removed on exit.\n"
+         ),
+     )
+diff --git a/mic_bridge_app/domain.py b/mic_bridge_app/domain.py
+index d3e4cde..0c8e42a 100644
+--- a/mic_bridge_app/domain.py
++++ b/mic_bridge_app/domain.py
+@@ -31,7 +31,7 @@ class DeviceSelection:
+     output_device_id: int
+     input_was_auto_selected: bool
+     output_was_auto_selected: bool
+-    linux_virtual_mic_was_created: bool
++    linux_virtual_mic_was_auto_created: bool
+
+
+ @dataclass(frozen=True)
+@@ -52,9 +52,20 @@ class RunConfig:
+     output_channels: int
+     output_tags: tuple[str, ...]
+     output_was_auto_selected: bool
+-    linux_virtual_mic_was_created: bool
++    linux_virtual_mic_was_auto_created: bool
+     latency: str
+
+
++@dataclass
++class LinuxVirtualMicLease:
++    """
++    Tracks a temporary Linux virtual mic module created for the current run.
++
++    Only modules created by this process belong here. Pre-existing user-created
++    targets stay outside this lease and must not be auto-unloaded.
++    """
++
++    module_id: int | None = None
++    pactl_path: str | None = None
++
++
+ class AudioFifo:
+     """
+     Tiny float32 mono FIFO for callback-safe sample staging.
+diff --git a/mic_bridge_app/listing.py b/mic_bridge_app/listing.py
+index 06d7ff3..01255ed 100644
+--- a/mic_bridge_app/listing.py
++++ b/mic_bridge_app/listing.py
+@@ -98,17 +98,22 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> Non
+         print("    or monitor/source endpoints.")
+         print(
+             "  - If --output is omitted and no likely virtual target is visible, the run path tries"
+         )
+         print(
+-            f"    to create '{LINUX_VIRTUAL_MIC_DESCRIPTION}' automatically with pactl."
++            f"    to create a temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target automatically with pactl."
+         )
+         print(
+-            f"  - If it creates '{LINUX_VIRTUAL_MIC_DESCRIPTION}', it leaves it in place for later runs."
++            f"  - If it creates that temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target, it removes it on exit"
+         )
++        print("    and also removes it on failed/interrupted setup paths.")
+         print(
+-            "  - If that target already exists but PortAudio still cannot use it, the run path"
+-        )
++            "  - If a temporary target is created but PortAudio still cannot use it as a"
++        )
++        print("    usable output, the run path removes it before handing off.")
++        print(
++            "  - If that target already exists but PortAudio still cannot use it, the run path"
++        )
+         print("    hands off instead of trying to stack duplicate copies.")
+-        print("  - Recommended virtual mic target command:")
++        print("  - If you want a Linux virtual mic target to keep showing up between runs or in")
++        print("    list-devices, create it yourself with:")
+         print(f"      {linux_virtual_mic_command()}")
+         print("  - Why this form:")
+         print(
+diff --git a/mic_bridge_app/runtime.py b/mic_bridge_app/runtime.py
+index c652a4a..1a63770 100644
+--- a/mic_bridge_app/runtime.py
++++ b/mic_bridge_app/runtime.py
+@@ -7,8 +7,8 @@ This module owns:
+ - resolving explicit and auto-selected devices into a concrete DeviceSelection
+   and RunConfig
+ - smooth handoffs when auto mode cannot choose safely
+-- smooth handoffs around repeated runs, stale numeric IDs, interrupted setup,
+-  and partial Linux target/model state
++- smooth handoffs around repeated runs, stale numeric IDs, interrupted setup,
++  temporary Linux target cleanup, and partial model state
+ - optional Linux virtual mic creation when output auto-selection needs it
+ - optional one-shot model download when the chosen model is missing locally
+ - printing the run summary
+@@ -55,6 +55,7 @@ from .domain import (
+     CallbackStatusCounter,
+     DeviceProbe,
+     DeviceSelection,
++    LinuxVirtualMicLease,
+     RunConfig,
+ )
+ from .modeling import resolve_stream_sample_rate
+@@ -239,6 +240,45 @@ def _pactl_failure_detail(completed: subprocess.CompletedProcess[str]) -> str:
+     return f"`pactl` exited with status {completed.returncode}."
+
+
++def _extract_pactl_module_id(text: str | None) -> int | None:
++    if text is None:
++        return None
++
++    for line in text.splitlines():
++        stripped = line.strip()
++        if not stripped:
++            continue
++        token = stripped.split()[0]
++        if token.isdigit():
++            return int(token)
++
++    return None
++
++
++def _linux_virtual_mic_module_id(pactl_path: str) -> int | None:
++    try:
++        completed = subprocess.run(
++            [pactl_path, "list", "short", "modules"],
++            check=False,
++            capture_output=True,
++            text=True,
++        )
++    except OSError:
++        return None
++
++    if completed.returncode != 0:
++        return None
++
++    for line in completed.stdout.splitlines():
++        if not line.strip():
++            continue
++        raw_columns = line.split("\t")
++        columns = raw_columns if len(raw_columns) >= 2 else line.split(maxsplit=2)
++        if len(columns) < 2 or not columns[0].strip().isdigit():
++            continue
++        args_text = " ".join(columns[2:]).strip()
++        if columns[1].strip() == "module-null-sink" and f"sink_name={LINUX_VIRTUAL_MIC_SINK_NAME}" in args_text:
++            return int(columns[0].strip())
++    return None
++
++
+ def _linux_virtual_mic_sink_exists(pactl_path: str) -> bool | None:
+     try:
+         completed = subprocess.run(
+@@ -262,7 +302,13 @@ def _linux_virtual_mic_sink_exists(pactl_path: str) -> bool | None:
+     return False
+
+
+-def _try_create_linux_virtual_mic_target() -> tuple[str, str | None]:
++def _try_create_linux_virtual_mic_target(
++    lease: LinuxVirtualMicLease,
++) -> tuple[str, str | None]:
++    """
++    Try to create the temporary Linux virtual mic target once.
++
++    If creation succeeds, store the loaded module ID in `lease` for cleanup.
++    """
+     pactl_path = shutil.which("pactl")
+     if pactl_path is None:
+         return "failed", "`pactl` was not found."
+@@ -292,9 +338,79 @@ def _try_create_linux_virtual_mic_target() -> tuple[str, str | None]:
+     if completed.returncode != 0:
+         return "failed", _pactl_failure_detail(completed)
+
++    module_id = _extract_pactl_module_id(completed.stdout)
++    if module_id is None:
++        module_id = _linux_virtual_mic_module_id(pactl_path)
++    if module_id is None:
++        return (
++            "failed",
++            "The virtual mic target was created, but its Pactl module ID could not be determined for cleanup.",
++        )
++
++    lease.module_id = module_id
++    lease.pactl_path = pactl_path
+     time.sleep(0.35)
+     return "created", None
+
+
++def _looks_like_missing_unloaded_module(detail: str) -> bool:
++    text = detail.casefold()
++    return (
++        "no such entity" in text
++        or "no such module" in text
++        or "not found" in text
++    )
++
++
++def _cleanup_auto_created_linux_virtual_mic(
++    lease: LinuxVirtualMicLease,
++) -> tuple[str | None, str | None]:
++    """
++    Unload the temporary Linux virtual mic target created for this run, if any.
++
++    Returns:
++        (success_message, handoff_message)
++    """
++    if platform.system() != "Linux" or lease.module_id is None:
++        return None, None
++
++    module_id = int(lease.module_id)
++    command_display = f"pactl unload-module {module_id}"
++    pactl_path = lease.pactl_path or shutil.which("pactl")
++    if pactl_path is None:
++        return (
++            None,
++            "The temporary Linux virtual mic target created for this run could not be removed automatically.\n"
++            "If it is still present, run:\n"
++            f"  {command_display}",
++        )
++
++    try:
++        completed = subprocess.run(
++            [pactl_path, "unload-module", str(module_id)],
++            check=False,
++            capture_output=True,
++            text=True,
++        )
++    except KeyboardInterrupt:
++        return (
++            None,
++            "Interrupted while removing the temporary Linux virtual mic target.\n"
++            "If it is still present, run:\n"
++            f"  {command_display}",
++        )
++    except OSError as exc:
++        return (
++            None,
++            "The temporary Linux virtual mic target created for this run could not be removed automatically.\n"
++            f"Details: {exc}\n"
++            "If it is still present, run:\n"
++            f"  {command_display}",
++        )
++
++    if completed.returncode != 0:
++        detail = _pactl_failure_detail(completed)
++        if _looks_like_missing_unloaded_module(detail):
++            lease.module_id = None
++            lease.pactl_path = None
++            return None, None
++        return (
++            None,
++            "The temporary Linux virtual mic target created for this run could not be removed cleanly.\n"
++            f"Details: {detail}\n"
++            "If it is still present, run:\n"
++            f"  {command_display}",
++        )
++
++    lease.module_id = None
++    lease.pactl_path = None
++    return (
++        f"Temporary Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}' was removed.",
++        None,
++    )
++
++
+ def _looks_like_missing_model_error(exc: BaseException, model_name: str) -> bool:
+     text = f"{type(exc).__name__}: {exc}".casefold()
+     missing_markers = (
+@@ -363,20 +479,14 @@ def _build_stream_enhancer(dpdfnet_mod, *, model_name: str, verbose: bool):
+         ) from exc
+
+
+-def _persistent_linux_target_handoff_text(config: RunConfig) -> str | None:
+-    if platform.system() != "Linux" or not config.linux_virtual_mic_was_created:
+-        return None
+-
+-    return (
+-        f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created and left in place.\n"
+-        "Later runs can reuse it, but if it still does not appear in list-devices,\n"
+-        "fix the PortAudio host-API side instead of creating another copy."
+-    )
+-
+-
+ def _resolve_run_device_ids(
+     *,
+     sample_rate: int,
+     requested_input_id: int | None,
+     requested_output_id: int | None,
++    linux_virtual_mic_lease: LinuxVirtualMicLease,
+ ) -> DeviceSelection:
+     """
+     Resolve explicit and auto-selected device IDs.
+@@ -385,13 +495,13 @@ def _resolve_run_device_ids(
+     - inputs may pick a broad physical-looking mic candidate
+     - outputs remain strict and must look like bridge targets
+-    - on Linux, omitting --output allows one automatic pactl creation attempt
+-      if no likely bridge-style output is visible at all
++    - on Linux, omitting --output allows one automatic temporary pactl creation
++      attempt if no likely bridge-style output is visible at all
+     """
+     if requested_input_id is not None and requested_output_id is not None:
+         return DeviceSelection(
+             input_device_id=requested_input_id,
+             output_device_id=requested_output_id,
+             input_was_auto_selected=False,
+             output_was_auto_selected=False,
+-            linux_virtual_mic_was_created=False,
++            linux_virtual_mic_was_auto_created=False,
+         )
+
+     input_probes, output_probes, hostapi_names = _scan_all_device_probes(sample_rate)
+-    linux_virtual_mic_was_created = False
++    linux_virtual_mic_was_auto_created = False
+     virtual_mic_note: str | None = None
+
+     def maybe_create_linux_virtual_mic() -> None:
+@@ -401,7 +511,7 @@ def _resolve_run_device_ids(
+         nonlocal input_probes
+         nonlocal output_probes
+         nonlocal hostapi_names
+-        nonlocal linux_virtual_mic_was_created
++        nonlocal linux_virtual_mic_was_auto_created
+         nonlocal virtual_mic_note
+
+         if platform.system() != "Linux" or requested_output_id is not None:
+@@ -416,9 +526,9 @@ def _resolve_run_device_ids(
+             return
+
+         print(
+-            f"No likely virtual mic target is visible, trying to create '{LINUX_VIRTUAL_MIC_DESCRIPTION}' automatically..."
++            f"No likely virtual mic target is visible, trying to create a temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target automatically..."
+         )
+-        status, detail = _try_create_linux_virtual_mic_target()
++        status, detail = _try_create_linux_virtual_mic_target(linux_virtual_mic_lease)
+         if status == "failed":
+             virtual_mic_note = (
+                 f"Automatic Linux virtual mic setup could not create '{LINUX_VIRTUAL_MIC_DESCRIPTION}': "
+@@ -431,18 +541,20 @@ def _resolve_run_device_ids(
+
+         if any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+             if status == "created":
+-                linux_virtual_mic_was_created = True
++                linux_virtual_mic_was_auto_created = True
+                 print(
+-                    f"Created Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}'."
++                    f"Created temporary Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}'."
+                 )
+             else:
+                 print(
+                     f"Found existing Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}'."
+                 )
+             return
+
+         if status == "created":
+-            linux_virtual_mic_was_created = True
+-            virtual_mic_note = f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created and left in place, but PortAudio still does not expose it as a usable output device."
++            linux_virtual_mic_was_auto_created = True
++            virtual_mic_note = (
++                f"A temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target was created for this run, "
++                "but PortAudio still does not expose it as a usable output device."
++            )
+             return
+
+         virtual_mic_note = f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' already exists in PipeWire/PulseAudio, but PortAudio still does not expose it as a usable output device. Not creating another copy."
+@@ -455,7 +567,7 @@ def _resolve_run_device_ids(
+                 output_device_id=output_probe.device_id,
+                 input_was_auto_selected=False,
+                 output_was_auto_selected=True,
+-                linux_virtual_mic_was_created=linux_virtual_mic_was_created,
++                linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
+             )
+
+         if not any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+@@ -468,7 +580,7 @@ def _resolve_run_device_ids(
+                     output_device_id=output_probe.device_id,
+                     input_was_auto_selected=False,
+                     output_was_auto_selected=True,
+-                    linux_virtual_mic_was_created=linux_virtual_mic_was_created,
++                    linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
+                 )
+
+         raise ValueError(
+@@ -494,7 +606,7 @@ def _resolve_run_device_ids(
+                 output_device_id=requested_output_id,
+                 input_was_auto_selected=True,
+                 output_was_auto_selected=False,
+-                linux_virtual_mic_was_created=linux_virtual_mic_was_created,
++                linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
+             )
+
+         raise ValueError(
+@@ -513,7 +625,7 @@ def _resolve_run_device_ids(
+             output_device_id=output_probe.device_id,
+             input_was_auto_selected=True,
+             output_was_auto_selected=True,
+-            linux_virtual_mic_was_created=linux_virtual_mic_was_created,
++            linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
+         )
+
+     if not any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+@@ -526,18 +638,20 @@ def _resolve_run_device_ids(
+                 output_device_id=output_probe.device_id,
+                 input_was_auto_selected=True,
+                 output_was_auto_selected=True,
+-                linux_virtual_mic_was_created=linux_virtual_mic_was_created,
++                linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
+             )
+
+     raise ValueError(
+         _build_no_auto_pair_handoff(
+             sample_rate=sample_rate,
+             input_probes=input_probes,
+             output_probes=output_probes,
+-            virtual_mic_note=virtual_mic_note,
++            virtual_mic_note=(
++                None
++                if virtual_mic_note is None
++                else f"{virtual_mic_note}\nThe run will remove any temporary target it created before exiting."
++            ),
+         )
+     )
+
+
+-def _build_run_config(args: argparse.Namespace) -> RunConfig:
++def _build_run_config(
++    args: argparse.Namespace,
++    *,
++    linux_virtual_mic_lease: LinuxVirtualMicLease,
++) -> RunConfig:
+     """
+     Resolve CLI args into a concrete run configuration.
+
+@@ -547,6 +661,8 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
+     - input and output devices must belong to the same host API
+     - channel counts are negotiated conservatively, but input/output use
+       different preference orders for practical reasons
++    - if the run creates a temporary Linux virtual mic target, the current run
++      tracks it for cleanup on every exit path
+     - Linux/JACK block sizing auto-adjusts when `--block-ms` is omitted
+     - auto mode may resolve omitted devices, but output auto-selection remains
+       deliberately stricter than input auto-selection
+@@ -559,6 +675,7 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
+         sample_rate=sample_rate,
+         requested_input_id=requested_input_id,
+         requested_output_id=requested_output_id,
++        linux_virtual_mic_lease=linux_virtual_mic_lease,
+     )
+
+     _, hostapi_names = query_audio_inventory()
+@@ -632,7 +749,7 @@ def _build_run_config(args: argparse.Namespace) -> RunConfig:
+         output_channels=output_channels,
+         output_tags=infer_device_tags(output_name),
+         output_was_auto_selected=selection.output_was_auto_selected,
+-        linux_virtual_mic_was_created=selection.linux_virtual_mic_was_created,
++        linux_virtual_mic_was_auto_created=selection.linux_virtual_mic_was_auto_created,
+         latency=str(args.latency),
+     )
+
+@@ -676,11 +793,17 @@ def _print_run_summary(config: RunConfig) -> None:
+     elif config.output_was_auto_selected:
+         print("  - Output was auto-selected.")
+
+-    if config.linux_virtual_mic_was_created:
++    if config.linux_virtual_mic_was_auto_created:
+         print(
+-            f"  - The Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created automatically for this run and will be left in place for later runs."
++            f"  - The Linux virtual mic target '{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created temporarily for this run and will be removed when the run exits."
++        )
++        print(
++            "  - Because that target is temporary, its numeric output ID is only useful for this active run."
+         )
+-
++        print(
++            "    If you want a reusable Linux virtual mic target to pin or inspect with list-devices,"
++        )
++        print("    create it manually before running the bridge.")
+     print(
+         "  - First enhanced output arrives after roughly one full model window (~20 ms)."
+     )
+@@ -769,12 +892,20 @@ def _print_run_summary(config: RunConfig) -> None:
+     print()
+
+
+-def run_command(args: argparse.Namespace) -> int:
+-    sd_mod = require_sounddevice()
+-    dpdfnet_mod = require_dpdfnet()
++def _append_user_note(message: str, note: str) -> str:
++    base = message.strip()
++    if not base:
++        return note
++    return f"{base}\n{note}"
+
++
++def _run_command_impl(
++    args: argparse.Namespace,
++    *,
++    sd_mod,
++    dpdfnet_mod,
++    linux_virtual_mic_lease: LinuxVirtualMicLease,
++) -> int:
+     if platform.system() not in ("Windows", "Linux"):
+         _eprint(
+             "[note] This script is primarily intended for Windows 10/11 and Linux PipeWire systems. It may still work elsewhere, but that is not the supported target."
+         )
+
+-    config = _build_run_config(args)
++    config = _build_run_config(
++        args,
++        linux_virtual_mic_lease=linux_virtual_mic_lease,
++    )
+     _print_run_summary(config)
+
+     print("Preparing DPDFNet model...")
+@@ -847,9 +978,6 @@ def run_command(args: argparse.Namespace) -> int:
+             lines = ["The audio callback aborted unexpectedly."]
+             detail = _first_line(str(fatal_callback_error[0]))
+             if detail is not None:
+                 lines.append(f"Details: {detail}")
+-            linux_target_note = _persistent_linux_target_handoff_text(config)
+-            if linux_target_note is not None:
+-                lines.append(linux_target_note)
+             lines.extend(
+                 [
+                     "Try the bridge again. If it repeats, re-run:",
+@@ -860,9 +988,6 @@ def run_command(args: argparse.Namespace) -> int:
+
+         detail = _first_line(str(exc)) or str(exc)
+         lines = ["Failed to open or run the audio stream.", f"Details: {detail}"]
+-        linux_target_note = _persistent_linux_target_handoff_text(config)
+-        if linux_target_note is not None:
+-            lines.append(linux_target_note)
+         lines.extend(
+             [
+                 "If the devices changed, disappeared, or became busy, re-run:",
+@@ -886,3 +1011,39 @@ def run_command(args: argparse.Namespace) -> int:
+         print()
+
+     return 0
++
++
++def run_command(args: argparse.Namespace) -> int:
++    sd_mod = require_sounddevice()
++    dpdfnet_mod = require_dpdfnet()
++    linux_virtual_mic_lease = LinuxVirtualMicLease()
++
++    try:
++        result = _run_command_impl(
++            args,
++            sd_mod=sd_mod,
++            dpdfnet_mod=dpdfnet_mod,
++            linux_virtual_mic_lease=linux_virtual_mic_lease,
++        )
++    except KeyboardInterrupt as exc:
++        cleanup_success_message, cleanup_handoff_message = (
++            _cleanup_auto_created_linux_virtual_mic(linux_virtual_mic_lease)
++        )
++        note = cleanup_handoff_message or cleanup_success_message
++        if note is not None:
++            base_message = str(exc).strip() or "Interrupted."
++            raise KeyboardInterrupt(_append_user_note(base_message, note)) from exc
++        raise
++    except Exception as exc:
++        cleanup_success_message, cleanup_handoff_message = (
++            _cleanup_auto_created_linux_virtual_mic(linux_virtual_mic_lease)
++        )
++        note = cleanup_handoff_message or cleanup_success_message
++        if note is not None:
++            raise RuntimeError(_append_user_note(str(exc), note)) from exc
++        raise
++
++    cleanup_success_message, cleanup_handoff_message = (
++        _cleanup_auto_created_linux_virtual_mic(linux_virtual_mic_lease)
++    )
++    if cleanup_handoff_message is not None:
++        raise RuntimeError(cleanup_handoff_message)
++    if cleanup_success_message is not None:
++        print(cleanup_success_message)
++        print()
++    return result
