@@ -12,6 +12,7 @@ This module owns:
 - printing the run summary
 - constructing the StreamEnhancer
 - opening the duplex sounddevice stream
+- polling queued live alerts for important runtime events
 - the real-time callback
 - shutdown reporting
 
@@ -32,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import time
+from queue import Empty, SimpleQueue
 
 import numpy as np
 
@@ -72,6 +74,14 @@ from .domain import (
     RunConfig,
 )
 from .modeling import resolve_stream_sample_rate
+from .notifications import RuntimeUserNotifier
+
+_CALLBACK_RUNTIME_ISSUE_LABELS: dict[str, str] = {
+    "input_underflow": "capture underflow",
+    "input_overflow": "capture overflow",
+    "output_underflow": "playback underflow",
+    "output_overflow": "playback overflow",
+}
 
 
 def _eprint(*args: object) -> None:
@@ -948,6 +958,9 @@ def _print_run_summary(config: RunConfig) -> None:
         print("  - Enhanced mono will be written to a single opened output channel.")
 
     print("  - This script writes enhanced audio to your chosen output device.")
+    print(
+        "  - During the live run, important problems trigger a short attention alert so background runs are easier to notice."
+    )
 
     if system == "Windows":
         print(
@@ -972,6 +985,9 @@ def _print_run_summary(config: RunConfig) -> None:
         )
         print("    usually a real PipeWire backend if available, otherwise PulseAudio,")
         print("    JACK, or ALSA.")
+        print(
+            "  - Linux note: if `notify-send` is available, live attention alerts also try a desktop notification."
+        )
         if input_hostapi_key not in {"pipewire", "pulse", "jack", "alsa"}:
             print(
                 "  - Linux note: a PipeWire-compatible PortAudio host API is recommended if available."
@@ -1043,6 +1059,124 @@ def _print_run_summary(config: RunConfig) -> None:
     print()
 
 
+def _format_runtime_issue_summary(status_counter: CallbackStatusCounter) -> str | None:
+    parts: list[str] = []
+
+    for name, count in status_counter.nonzero_runtime_issue_counts():
+        label = _CALLBACK_RUNTIME_ISSUE_LABELS.get(name, name.replace("_", " "))
+        if count == 1:
+            parts.append(label)
+        else:
+            parts.append(f"{label} x{count}")
+
+    if not parts:
+        return None
+
+    return ", ".join(parts)
+
+
+def _emit_live_runtime_alert(
+    *,
+    notifier: RuntimeUserNotifier,
+    status_counter: CallbackStatusCounter,
+    alert_key: str,
+) -> None:
+    summary = _format_runtime_issue_summary(status_counter)
+
+    if alert_key == "first-runtime-issue":
+        lines = [
+            "The bridge is still running, but PortAudio reported a real-time audio problem.",
+        ]
+        if summary is not None:
+            lines.append(f"Observed so far: {summary}.")
+        lines.append(
+            "If this repeats, try a larger --block-ms or a different device pair."
+        )
+        notifier.attention(
+            title="Audio glitch detected",
+            body="\n".join(lines),
+            urgency="normal",
+        )
+        return
+
+    if alert_key == "repeated-runtime-issues":
+        lines = [
+            "The bridge is still running, but real-time audio problems have been reported repeatedly.",
+        ]
+        if summary is not None:
+            lines.append(f"Observed so far: {summary}.")
+        lines.append(
+            "If it keeps happening, stop the run, re-run list-devices, or try a larger --block-ms."
+        )
+        notifier.attention(
+            title="Audio glitches are continuing",
+            body="\n".join(lines),
+            urgency="normal",
+        )
+        return
+
+
+def _drain_live_runtime_alerts(
+    *,
+    notifier: RuntimeUserNotifier,
+    status_counter: CallbackStatusCounter,
+    live_alerts: SimpleQueue[str],
+) -> None:
+    while True:
+        try:
+            alert_key = live_alerts.get_nowait()
+        except Empty:
+            return
+
+        _emit_live_runtime_alert(
+            notifier=notifier,
+            status_counter=status_counter,
+            alert_key=alert_key,
+        )
+
+
+def _looks_like_device_loss(detail: str) -> bool:
+    text = detail.casefold()
+    markers = (
+        "device unavailable",
+        "device removed",
+        "device disconnected",
+        "device lost",
+        "device is no longer available",
+        "invalid device",
+        "no device",
+        "unanticipated host error",
+        "host error",
+        "stream closed",
+        "stream is stopped",
+        "jack server is not running",
+        "broken pipe",
+        "connection terminated",
+        "transport is not running",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _notify_unexpected_stream_stop(
+    *,
+    notifier: RuntimeUserNotifier,
+    detail: str,
+    callback_failed: bool,
+) -> None:
+    if callback_failed:
+        summary = "The live run aborted inside the audio callback and will exit."
+    elif _looks_like_device_loss(detail):
+        summary = "The selected audio device disappeared, became unavailable, or the audio backend dropped the stream."
+    else:
+        summary = "The live audio stream stopped unexpectedly and the run will exit."
+
+    notifier.attention(
+        title="Bridge stopped unexpectedly",
+        body=f"{summary}\nSee the terminal for the next step.",
+        urgency="critical",
+    )
+
+
 def _append_user_note(message: str, note: str) -> str:
     base = message.strip()
     if not base:
@@ -1055,6 +1189,7 @@ def _run_command_impl(
     *,
     sd_mod,
     dpdfnet_mod,
+    notifier: RuntimeUserNotifier,
     linux_virtual_mic_lease: LinuxVirtualMicLease,
 ) -> int:
     if platform.system() not in ("Windows", "Linux"):
@@ -1081,6 +1216,8 @@ def _run_command_impl(
     output_fifo = AudioFifo()
     status_counter = CallbackStatusCounter()
     fatal_callback_error: list[BaseException] = []
+    live_alerts: SimpleQueue[str] = SimpleQueue()
+    streaming_started = False
 
     def audio_callback(indata, outdata, frames, time_info, status) -> None:
         """
@@ -1099,11 +1236,16 @@ def _run_command_impl(
         3) push returned samples into FIFO
         4) pop exactly `frames` samples for playback
         5) duplicate mono across all output channels if needed
+
+        Live user alerts are queued here as one-shot markers only. The main
+        thread emits the actual attention cue so the callback stays real-time
+        safe and does not try to print or launch OS notification helpers.
         """
         del time_info  # unused in Version 0
 
         try:
-            status_counter.observe(status)
+            for alert_key in status_counter.observe(status):
+                live_alerts.put(alert_key)
 
             if indata.ndim != 2:
                 raise RuntimeError(
@@ -1141,17 +1283,39 @@ def _run_command_impl(
             latency=config.latency,
             callback=audio_callback,
         ):
+            streaming_started = True
             print("Streaming.")
             print("Press Ctrl+C to stop.")
             print()
             while True:
+                _drain_live_runtime_alerts(
+                    notifier=notifier,
+                    status_counter=status_counter,
+                    live_alerts=live_alerts,
+                )
                 time.sleep(0.5)
 
     except KeyboardInterrupt:
+        _drain_live_runtime_alerts(
+            notifier=notifier,
+            status_counter=status_counter,
+            live_alerts=live_alerts,
+        )
         print()
         print("Stopping bridge...")
     except Exception as exc:
+        _drain_live_runtime_alerts(
+            notifier=notifier,
+            status_counter=status_counter,
+            live_alerts=live_alerts,
+        )
+
         if fatal_callback_error:
+            _notify_unexpected_stream_stop(
+                notifier=notifier,
+                detail=_first_line(str(fatal_callback_error[0])) or "callback abort",
+                callback_failed=True,
+            )
             lines = ["The audio callback aborted unexpectedly."]
             detail = _first_line(str(fatal_callback_error[0]))
             if detail is not None:
@@ -1166,6 +1330,13 @@ def _run_command_impl(
             raise RuntimeError("\n".join(lines)) from fatal_callback_error[0]
 
         detail = _first_line(str(exc)) or str(exc)
+        if streaming_started:
+            _notify_unexpected_stream_stop(
+                notifier=notifier,
+                detail=detail,
+                callback_failed=False,
+            )
+
         lines = ["Failed to open or run the audio stream.", f"Details: {detail}"]
         lines.extend(
             [
@@ -1194,6 +1365,7 @@ def _run_command_impl(
 def run_command(args: argparse.Namespace) -> int:
     sd_mod = require_sounddevice()
     dpdfnet_mod = require_dpdfnet()
+    notifier = RuntimeUserNotifier()
     linux_virtual_mic_lease = LinuxVirtualMicLease()
 
     try:
@@ -1201,6 +1373,7 @@ def run_command(args: argparse.Namespace) -> int:
             args,
             sd_mod=sd_mod,
             dpdfnet_mod=dpdfnet_mod,
+            notifier=notifier,
             linux_virtual_mic_lease=linux_virtual_mic_lease,
         )
     except KeyboardInterrupt as exc:

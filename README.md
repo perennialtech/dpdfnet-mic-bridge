@@ -84,9 +84,9 @@ If the selected model is missing at startup, the run path tries one automatic do
    ```text
    python mic_bridge.py list-devices
    python mic_bridge.py run --input 18 --output 16
+   ```
 
    If you want a Linux virtual mic target to keep showing up in `list-devices` between runs, create it manually first.
-   ```
 
 5. If you prefer a reusable Linux virtual mic target, create it yourself before running the bridge:
 
@@ -99,6 +99,25 @@ If the selected model is missing at startup, the run path tries one automatic do
    A manually created target can keep showing up between runs until you unload it yourself or your audio session resets, unlike the run command's temporary auto-created target.
 
 6. In Discord, OBS, or your app, first try selecting `DPDFNet_Mic` directly as the microphone. If the app does not expose it, try the matching monitor/source instead.
+
+## Runtime attention cues
+
+`python mic_bridge.py run` is often left in the background, so important live events try to raise attention promptly instead of waiting for you to notice the terminal later.
+
+What gets surfaced during a run:
+
+- the first real-time audio glitch reported by PortAudio
+- an escalation if those glitches keep happening
+- an unexpected stop after streaming has already started
+
+How the alert is surfaced:
+
+- a short attention notice in the terminal
+- a terminal bell when attached to a TTY
+- on Linux, a best-effort desktop notification via `notify-send` if available
+- on Windows, a best-effort system beep via `winsound` if available
+
+The detailed next step still stays in the terminal output. The live alerts are intentionally one-shot and concise so the bridge does not spam you for every single callback status flag.
 
 ## Command overview
 

@@ -77,3 +77,18 @@ CALLBACK_STATUS_FLAG_NAMES: tuple[str, ...] = (
     "output_overflow",
     "priming_output",
 )
+
+# These are the callback status flags that should trigger live user attention if
+# they show up during a background run. `priming_output` is intentionally
+# excluded because it commonly appears at startup and is not a user-problem.
+CALLBACK_RUNTIME_ALERT_FLAGS: tuple[str, ...] = (
+    "input_underflow",
+    "input_overflow",
+    "output_underflow",
+    "output_overflow",
+)
+
+# Alert once when the first real-time problem appears, then escalate once if the
+# total count keeps climbing. The detailed per-flag breakdown still belongs in
+# the shutdown summary.
+CALLBACK_RUNTIME_ALERT_REPEAT_COUNT = 10

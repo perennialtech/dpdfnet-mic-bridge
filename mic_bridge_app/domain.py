@@ -13,7 +13,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .constants import CALLBACK_STATUS_FLAG_NAMES
+from .constants import (
+    CALLBACK_RUNTIME_ALERT_FLAGS,
+    CALLBACK_RUNTIME_ALERT_REPEAT_COUNT,
+    CALLBACK_STATUS_FLAG_NAMES,
+)
 
 
 @dataclass(frozen=True)
@@ -140,21 +144,63 @@ class AudioFifo:
 
 class CallbackStatusCounter:
     """
-    Collect callback status events for a shutdown summary.
+    Collect callback status events for a shutdown summary and one-shot live
+    alerts.
 
     We do not print inside the callback because printing in the audio callback
     is a bad real-time habit and can itself cause glitches.
+
+    Live-alert policy:
+    - first real-time issue: emit one marker
+    - repeated real-time issues: emit one escalation marker
+    - detailed per-flag counts still belong in the shutdown summary
     """
 
     def __init__(self) -> None:
         self.counts: dict[str, int] = {name: 0 for name in CALLBACK_STATUS_FLAG_NAMES}
+        self._emitted_first_runtime_issue_alert = False
+        self._emitted_repeated_runtime_issue_alert = False
 
-    def observe(self, status) -> None:
+    @property
+    def runtime_issue_count(self) -> int:
+        return sum(self.counts.get(name, 0) for name in CALLBACK_RUNTIME_ALERT_FLAGS)
+
+    def observe(self, status) -> tuple[str, ...]:
         if not status:
-            return
+            return tuple()
+
+        previous_runtime_issue_count = self.runtime_issue_count
+
         for name in CALLBACK_STATUS_FLAG_NAMES:
             if bool(getattr(status, name, False)):
                 self.counts[name] += 1
+
+        alerts: list[str] = []
+        current_runtime_issue_count = self.runtime_issue_count
+
+        if (
+            current_runtime_issue_count > previous_runtime_issue_count
+            and not self._emitted_first_runtime_issue_alert
+        ):
+            self._emitted_first_runtime_issue_alert = True
+            alerts.append("first-runtime-issue")
+
+        if (
+            current_runtime_issue_count >= CALLBACK_RUNTIME_ALERT_REPEAT_COUNT
+            and not self._emitted_repeated_runtime_issue_alert
+        ):
+            self._emitted_repeated_runtime_issue_alert = True
+            alerts.append("repeated-runtime-issues")
+
+        return tuple(alerts)
+
+    def nonzero_runtime_issue_counts(self) -> list[tuple[str, int]]:
+        pairs: list[tuple[str, int]] = []
+        for name in CALLBACK_RUNTIME_ALERT_FLAGS:
+            count = self.counts.get(name, 0)
+            if count:
+                pairs.append((name, count))
+        return pairs
 
     def nonzero_lines(self) -> list[str]:
         lines: list[str] = []

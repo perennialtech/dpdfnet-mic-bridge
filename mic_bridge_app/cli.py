@@ -30,6 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
             "the run command tries to create a temporary target for that run:\n"
             f"  {linux_virtual_mic_command()}\n"
             "If this script creates that Linux target, it removes it on exit.\n"
+            "During a live run, important problems such as repeated audio glitches or\n"
+            "unexpected stream loss trigger a concise attention alert.\n"
             "On Windows, VB-CABLE still needs to be installed outside the script.\n"
             "Use 'list-devices' when you want to inspect, pin, or troubleshoot device IDs.\n"
             "Version 0 intentionally has no separate 'validate' subcommand."
@@ -104,7 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
             "Run the live microphone -> DPDFNet -> output-device bridge.\n"
             "If --input and/or --output are omitted, the command tries to auto-select them.\n"
             "Auto-output selection is intentionally strict and will not silently pick\n"
-            "speakers, headphones, or monitor/source endpoints as the bridge output."
+            "speakers, headphones, or monitor/source endpoints as the bridge output.\n"
+            "During an active run, important problems such as repeated real-time glitches\n"
+            "or an unexpected stream stop trigger a concise attention alert."
         ),
     )
     run_parser.add_argument(

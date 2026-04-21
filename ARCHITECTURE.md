@@ -13,6 +13,7 @@ The code is split so policy boundaries stay easy to find and audit:
 - sounddevice and PortAudio host-API policy
 - device probing, scoring, and auto-selection candidate policy
 - live runtime configuration and smooth user handoffs
+- best-effort user-attention cues for important live-run events
 - the callback itself
 - long-form architectural rationale
 
@@ -75,6 +76,12 @@ mic_bridge_app/audio_system.py
 mic_bridge_app/listing.py
     The list-devices command, used as the fallback discovery and pinning workflow.
 
+mic_bridge_app/notifications.py
+    Best-effort attention cues for important live-run events.
+    Runtime decides when a live event is important enough to surface.
+    This module decides how to surface it without adding hard runtime
+    dependencies or hiding the terminal handoff.
+
 mic_bridge_app/runtime.py
     The run command:
     - resolve explicit and auto-selected devices
@@ -86,6 +93,7 @@ mic_bridge_app/runtime.py
     - do a one-shot automatic model download when the model looks missing
     - open the duplex stream
     - keep interrupted/failed-run handoffs concise around temporary Linux target cleanup
+    - poll queued live alerts from the callback path
     - run the callback
     - print shutdown status summary
 ```
@@ -172,6 +180,19 @@ If the host API is JACK on Linux and the user omits `--block-ms`, the code choos
 
 Input negotiation prefers mono. Output negotiation prefers 2 channels, then 1, then max channels, because opening some Linux virtual sinks as mono can lead to left-only playback. The bridge signal is still enhanced mono duplicated across all opened output channels. Do not simplify this back to mono-first for output.
 
+### Live runtime alerts are queued out of the callback and stay concise
+
+Important live-run events deserve attention because the bridge often runs in the background, but the callback must stay real-time-safe.
+
+Keep this split:
+
+- the callback may increment counters and queue one-shot alert markers
+- the main thread emits the actual user-facing attention cue
+- do not print, run subprocesses, or attempt OS notifications from inside the callback
+- do not spam on every individual underflow/overflow flag
+- first glitch + one escalation is intentional; detailed counts still belong in the shutdown summary
+- notification failures are best-effort only and must never replace the terminal handoff
+
 ## Code style guardrails
 
 ### Keep policy centralized
@@ -181,7 +202,8 @@ If a rule is platform-specific, device-selection-specific, or model-specific, ke
 - sample-rate compatibility: `modeling.py`
 - host-API choice, device tagging, bridge-output identification, channel probing, device scoring, auto-output rules, Linux/JACK block policy: `audio_system.py`
 - `list-devices` output: `listing.py`
-- auto-selection flow, Linux target creation and cleanup, model download, stream setup, callback, run summaries: `runtime.py`
+- best-effort attention cues and cross-platform notification behavior: `notifications.py`
+- auto-selection flow, Linux target creation and cleanup, model download, stream setup, callback, live alert polling, run summaries: `runtime.py`
 - shared structures: `domain.py`
 - new models or sample-rate policy: `constants.py` and `modeling.py`
 
@@ -204,7 +226,7 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 5. resolve effective block size and negotiated channel counts
 6. print a summary so the user can spot mistakes before audio starts
 7. load `StreamEnhancer`, optionally doing one automatic model download
-8. open one duplex stream and run the callback
+8. open one duplex stream, poll queued live alerts, and run the callback
 9. unload any temporary Linux virtual mic target created by this run
 10. print callback underflow/overflow summary on shutdown
 
@@ -220,7 +242,8 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 - parser flags or help text: `cli.py`
 - host-API defaults, device tagging, bridge-output identification, channel probing, device scoring, auto-output rules, Linux/JACK block policy: `audio_system.py`
 - `list-devices` output: `listing.py`
-- auto-selection flow, Linux target creation, model download, stream setup, callback, run summaries: `runtime.py`
+- best-effort runtime attention cues and desktop/beep behavior: `notifications.py`
+- auto-selection flow, Linux target creation, model download, stream setup, callback, live alert polling, run summaries: `runtime.py`
 - shared structures: `domain.py`
 - new models or sample-rate policy: `constants.py` and `modeling.py`
 
@@ -254,7 +277,9 @@ If you are an AI assistant editing this repo:
 - if automatic model download leaves the model unloadable, hand off to manual download
 - do not let auto mode silently route the bridge into speakers, headphones, or monitor/source endpoints
 - keep Linux target creation, cleanup, and model download fail-fast and one-shot
+- keep background-run attention cues concise and deduplicated; do not emit a fresh user alert for every callback flag
+- do not print or attempt OS notifications from inside the audio callback
 - keep architecture rules and user docs aligned with the code
-- treat stream topology, sample-rate policy, same-host-API policy, strict auto-output policy, and bridge-output identification policy as deliberate design choices unless the task explicitly asks to redesign them
+- treat stream topology, sample-rate policy, same-host-API policy, strict auto-output policy, bridge-output identification policy, and queued main-thread live-alert delivery as deliberate design choices unless the task explicitly asks to redesign them
 
 If you make behavior changes, update the docs in the same patch.
