@@ -2,8 +2,8 @@
 Implementation of the `run` command.
 
 This module owns:
-- resolving explicit and auto-selected devices into a concrete DeviceSelection
-  and RunConfig
+- resolving explicit and auto-selected devices against one concrete current
+  PortAudio inventory snapshot
 - smooth handoffs when auto mode cannot choose safely
 - smooth handoffs around repeated runs, stale numeric IDs, interrupted setup,
   temporary Linux target cleanup, and partial model state
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import platform
-import shlex
 import shutil
 import subprocess
 import sys
@@ -41,8 +40,8 @@ from .audio_system import (
     build_device_probes,
     choose_best_auto_input,
     choose_best_auto_output,
+    device_info_from_inventory,
     format_jack_block_ms_hints,
-    get_device_info,
     has_bridge_output_tags,
     hostapi_filter_key_for_name,
     hostapi_name_for_device,
@@ -52,6 +51,7 @@ from .audio_system import (
     is_viable_auto_input_candidate,
     jack_block_ms_for_frames,
     linux_virtual_mic_command,
+    linux_virtual_mic_command_args,
     negotiate_stream_channels,
     query_audio_inventory,
     recommended_linux_jack_block_frames,
@@ -67,10 +67,13 @@ from .constants import (
 from .dependencies import require_dpdfnet, require_sounddevice
 from .domain import (
     AudioFifo,
+    AudioInventory,
     CallbackStatusCounter,
     DeviceProbe,
     DeviceSelection,
     LinuxVirtualMicLease,
+    ProbeSnapshot,
+    ResolvedRunSelection,
     RunConfig,
 )
 from .modeling import resolve_stream_sample_rate
@@ -88,22 +91,28 @@ def _eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
 
 
-def _scan_all_device_probes(
-    sample_rate: int,
-) -> tuple[list[DeviceProbe], list[DeviceProbe], list[str]]:
-    devices, hostapi_names = query_audio_inventory()
+def _scan_all_device_probes(sample_rate: int) -> ProbeSnapshot:
+    inventory = query_audio_inventory()
     input_probes, output_probes = build_device_probes(
-        devices=devices,
-        hostapi_names=hostapi_names,
+        inventory=inventory,
         hostapi_filter="all",
         samplerate=sample_rate,
     )
-    return input_probes, output_probes, hostapi_names
+    return ProbeSnapshot(
+        inventory=inventory,
+        input_probes=input_probes,
+        output_probes=output_probes,
+    )
 
 
-def _get_current_run_device_info(*, device_id: int, role: str) -> dict:
+def _get_current_run_device_info(
+    *,
+    inventory: AudioInventory,
+    device_id: int,
+    role: str,
+) -> dict:
     """
-    Resolve a device ID against the current PortAudio device view.
+    Resolve a device ID against one already-queried PortAudio device view.
 
     Repeated runs can see numeric IDs move after reboots, hotplug events,
     backend restarts, or other audio-session churn. When that happens, hand off
@@ -113,7 +122,7 @@ def _get_current_run_device_info(*, device_id: int, role: str) -> dict:
         raise ValueError(f"Unsupported device role '{role}'.")
 
     try:
-        return get_device_info(device_id)
+        return device_info_from_inventory(inventory, device_id)
     except ValueError as exc:
         lines = [
             f"Selected {role} device ID {device_id} is not currently available.",
@@ -388,7 +397,7 @@ def _try_create_linux_virtual_mic_target(
     if sink_exists is True:
         return "already-exists", None
 
-    command = shlex.split(linux_virtual_mic_command())
+    command = list(linux_virtual_mic_command_args())
     command[0] = pactl_path
 
     try:
@@ -575,13 +584,13 @@ def _build_stream_enhancer(dpdfnet_mod, *, model_name: str, verbose: bool):
         ) from exc
 
 
-def _resolve_run_device_ids(
+def _resolve_run_device_selection(
     *,
     sample_rate: int,
     requested_input_id: int | None,
     requested_output_id: int | None,
     linux_virtual_mic_lease: LinuxVirtualMicLease,
-) -> DeviceSelection:
+) -> ResolvedRunSelection:
     """
     Resolve explicit and auto-selected device IDs.
 
@@ -590,24 +599,52 @@ def _resolve_run_device_ids(
     - outputs remain strict and must look like bridge targets
     - on Linux, omitting --output allows one automatic temporary pactl creation
       attempt if no likely bridge-style output is visible at all
+
+    The returned result keeps the chosen IDs tied to the same current PortAudio
+    inventory snapshot that supplied the host API names used later by
+    `_build_run_config()`.
     """
     if requested_input_id is not None and requested_output_id is not None:
-        return DeviceSelection(
-            input_device_id=requested_input_id,
-            output_device_id=requested_output_id,
-            input_was_auto_selected=False,
-            output_was_auto_selected=False,
-            linux_virtual_mic_was_auto_created=False,
+        return ResolvedRunSelection(
+            selection=DeviceSelection(
+                input_device_id=requested_input_id,
+                output_device_id=requested_output_id,
+                input_was_auto_selected=False,
+                output_was_auto_selected=False,
+                linux_virtual_mic_was_auto_created=False,
+            ),
+            inventory=query_audio_inventory(),
         )
 
-    input_probes, output_probes, hostapi_names = _scan_all_device_probes(sample_rate)
+    snapshot = _scan_all_device_probes(sample_rate)
     linux_virtual_mic_was_auto_created = False
     virtual_mic_note: str | None = None
 
+    def finish_selection(
+        *,
+        input_device_id: int,
+        output_device_id: int,
+        input_was_auto_selected: bool,
+        output_was_auto_selected: bool,
+    ) -> ResolvedRunSelection:
+        return ResolvedRunSelection(
+            selection=DeviceSelection(
+                input_device_id=input_device_id,
+                output_device_id=output_device_id,
+                input_was_auto_selected=input_was_auto_selected,
+                output_was_auto_selected=output_was_auto_selected,
+                linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
+            ),
+            inventory=snapshot.inventory,
+        )
+
+    def visible_bridge_output_exists() -> bool:
+        return any(
+            is_likely_virtual_bridge_output(probe) for probe in snapshot.output_probes
+        )
+
     def maybe_create_linux_virtual_mic() -> None:
-        nonlocal input_probes
-        nonlocal output_probes
-        nonlocal hostapi_names
+        nonlocal snapshot
         nonlocal linux_virtual_mic_was_auto_created
         nonlocal virtual_mic_note
 
@@ -618,7 +655,7 @@ def _resolve_run_device_ids(
         # bridge output is visible at all. If a bridge target already exists but
         # only on a mismatched host API, Version 0 hands off instead of trying
         # to mutate the graph further.
-        if any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+        if visible_bridge_output_exists():
             return
 
         print(
@@ -632,11 +669,9 @@ def _resolve_run_device_ids(
             )
             return
 
-        input_probes, output_probes, hostapi_names = _scan_all_device_probes(
-            sample_rate
-        )
+        snapshot = _scan_all_device_probes(sample_rate)
 
-        if any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+        if visible_bridge_output_exists():
             if status == "created":
                 linux_virtual_mic_was_auto_created = True
                 print(
@@ -656,111 +691,131 @@ def _resolve_run_device_ids(
             )
             return
 
-        virtual_mic_note = f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' already exists in PipeWire/PulseAudio, but PortAudio still does not expose it as a usable output device. Not creating another copy."
+        virtual_mic_note = (
+            f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' already exists in PipeWire/PulseAudio, "
+            "but PortAudio still does not expose it as a usable output device. "
+            "Not creating another copy."
+        )
 
     if requested_input_id is not None and requested_output_id is None:
         input_info = _get_current_run_device_info(
-            device_id=requested_input_id, role="input"
+            inventory=snapshot.inventory,
+            device_id=requested_input_id,
+            role="input",
         )
-        input_hostapi = hostapi_name_for_device(input_info, hostapi_names)
+        input_hostapi = hostapi_name_for_device(
+            input_info,
+            snapshot.inventory.hostapi_names,
+        )
 
         output_probe = choose_best_auto_output(
-            output_probes,
+            snapshot.output_probes,
             hostapi_name=input_hostapi,
         )
         if output_probe is not None:
-            return DeviceSelection(
+            return finish_selection(
                 input_device_id=requested_input_id,
                 output_device_id=output_probe.device_id,
                 input_was_auto_selected=False,
                 output_was_auto_selected=True,
-                linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
             )
 
-        if not any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+        if not visible_bridge_output_exists():
             maybe_create_linux_virtual_mic()
-            input_hostapi = hostapi_name_for_device(input_info, hostapi_names)
+            input_info = _get_current_run_device_info(
+                inventory=snapshot.inventory,
+                device_id=requested_input_id,
+                role="input",
+            )
+            input_hostapi = hostapi_name_for_device(
+                input_info,
+                snapshot.inventory.hostapi_names,
+            )
             output_probe = choose_best_auto_output(
-                output_probes,
+                snapshot.output_probes,
                 hostapi_name=input_hostapi,
             )
             if output_probe is not None:
-                return DeviceSelection(
+                return finish_selection(
                     input_device_id=requested_input_id,
                     output_device_id=output_probe.device_id,
                     input_was_auto_selected=False,
                     output_was_auto_selected=True,
-                    linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
                 )
 
         raise ValueError(
             _build_no_auto_output_handoff(
                 input_hostapi_name=input_hostapi,
-                output_probes=output_probes,
+                output_probes=snapshot.output_probes,
                 virtual_mic_note=virtual_mic_note,
             )
         )
 
     if requested_input_id is None and requested_output_id is not None:
         output_info = _get_current_run_device_info(
-            device_id=requested_output_id, role="output"
+            inventory=snapshot.inventory,
+            device_id=requested_output_id,
+            role="output",
         )
-        output_hostapi = hostapi_name_for_device(output_info, hostapi_names)
+        output_hostapi = hostapi_name_for_device(
+            output_info,
+            snapshot.inventory.hostapi_names,
+        )
 
         input_probe = choose_best_auto_input(
-            input_probes,
+            snapshot.input_probes,
             hostapi_name=output_hostapi,
         )
         if input_probe is not None:
-            return DeviceSelection(
+            return finish_selection(
                 input_device_id=input_probe.device_id,
                 output_device_id=requested_output_id,
                 input_was_auto_selected=True,
                 output_was_auto_selected=False,
-                linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
             )
 
         raise ValueError(
             _build_no_auto_input_handoff(
                 sample_rate=sample_rate,
                 output_hostapi_name=output_hostapi,
-                input_probes=input_probes,
+                input_probes=snapshot.input_probes,
             )
         )
 
-    suggested_pair = suggest_run_pair(input_probes, output_probes)
+    suggested_pair = suggest_run_pair(snapshot.input_probes, snapshot.output_probes)
     if suggested_pair is not None:
         input_probe, output_probe = suggested_pair
-        return DeviceSelection(
+        return finish_selection(
             input_device_id=input_probe.device_id,
             output_device_id=output_probe.device_id,
             input_was_auto_selected=True,
             output_was_auto_selected=True,
-            linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
         )
 
-    if not any(is_likely_virtual_bridge_output(probe) for probe in output_probes):
+    if not visible_bridge_output_exists():
         maybe_create_linux_virtual_mic()
-        suggested_pair = suggest_run_pair(input_probes, output_probes)
+        suggested_pair = suggest_run_pair(snapshot.input_probes, snapshot.output_probes)
         if suggested_pair is not None:
             input_probe, output_probe = suggested_pair
-            return DeviceSelection(
+            return finish_selection(
                 input_device_id=input_probe.device_id,
                 output_device_id=output_probe.device_id,
                 input_was_auto_selected=True,
                 output_was_auto_selected=True,
-                linux_virtual_mic_was_auto_created=linux_virtual_mic_was_auto_created,
             )
 
     raise ValueError(
         _build_no_auto_pair_handoff(
             sample_rate=sample_rate,
-            input_probes=input_probes,
-            output_probes=output_probes,
+            input_probes=snapshot.input_probes,
+            output_probes=snapshot.output_probes,
             virtual_mic_note=(
                 None
                 if virtual_mic_note is None
-                else f"{virtual_mic_note}\nThe run will remove any temporary target it created before exiting."
+                else (
+                    f"{virtual_mic_note}\n"
+                    "The run will remove any temporary target it created before exiting."
+                )
             ),
         )
     )
@@ -777,6 +832,8 @@ def _build_run_config(
     Version 0 rules enforced here:
     - stream sample rate must equal model native sample rate
     - input and output devices must belong to the same host API
+    - device IDs, host API names, and same-host-API validation all use the same
+      current PortAudio inventory snapshot selected by the run path
     - channel counts are negotiated conservatively, but input/output use
       different preference orders for practical reasons
     - if the run creates a temporary Linux virtual mic target, the current run
@@ -791,20 +848,24 @@ def _build_run_config(
     requested_input_id = None if args.input is None else int(args.input)
     requested_output_id = None if args.output is None else int(args.output)
 
-    selection = _resolve_run_device_ids(
+    resolved_selection = _resolve_run_device_selection(
         sample_rate=sample_rate,
         requested_input_id=requested_input_id,
         requested_output_id=requested_output_id,
         linux_virtual_mic_lease=linux_virtual_mic_lease,
     )
-
-    _, hostapi_names = query_audio_inventory()
+    selection = resolved_selection.selection
+    inventory = resolved_selection.inventory
 
     input_info = _get_current_run_device_info(
-        device_id=selection.input_device_id, role="input"
+        inventory=inventory,
+        device_id=selection.input_device_id,
+        role="input",
     )
     output_info = _get_current_run_device_info(
-        device_id=selection.output_device_id, role="output"
+        inventory=inventory,
+        device_id=selection.output_device_id,
+        role="output",
     )
 
     if int(input_info["max_input_channels"]) < 1:
@@ -817,8 +878,8 @@ def _build_run_config(
             f"Selected output device {selection.output_device_id} exposes no output channels: {output_info['name']}"
         )
 
-    input_hostapi = hostapi_name_for_device(input_info, hostapi_names)
-    output_hostapi = hostapi_name_for_device(output_info, hostapi_names)
+    input_hostapi = hostapi_name_for_device(input_info, inventory.hostapi_names)
+    output_hostapi = hostapi_name_for_device(output_info, inventory.hostapi_names)
 
     if int(input_info["hostapi"]) != int(output_info["hostapi"]):
         raise ValueError(
@@ -1273,6 +1334,9 @@ def _run_command_impl(
 
     print("Opening duplex audio stream...")
 
+    stream_error: Exception | None = None
+    interrupted = False
+
     try:
         with sd_mod.Stream(
             samplerate=config.sample_rate,
@@ -1287,6 +1351,7 @@ def _run_command_impl(
             print("Streaming.")
             print("Press Ctrl+C to stop.")
             print()
+
             while True:
                 _drain_live_runtime_alerts(
                     notifier=notifier,
@@ -1296,20 +1361,20 @@ def _run_command_impl(
                 time.sleep(0.5)
 
     except KeyboardInterrupt:
-        _drain_live_runtime_alerts(
-            notifier=notifier,
-            status_counter=status_counter,
-            live_alerts=live_alerts,
-        )
-        print()
-        print("Stopping bridge...")
+        interrupted = True
     except Exception as exc:
+        stream_error = exc
+    finally:
         _drain_live_runtime_alerts(
             notifier=notifier,
             status_counter=status_counter,
             live_alerts=live_alerts,
         )
 
+    if interrupted:
+        print()
+        print("Stopping bridge...")
+    elif stream_error is not None:
         if fatal_callback_error:
             _notify_unexpected_stream_stop(
                 notifier=notifier,
@@ -1329,7 +1394,7 @@ def _run_command_impl(
             )
             raise RuntimeError("\n".join(lines)) from fatal_callback_error[0]
 
-        detail = _first_line(str(exc)) or str(exc)
+        detail = _first_line(str(stream_error)) or str(stream_error)
         if streaming_started:
             _notify_unexpected_stream_stop(
                 notifier=notifier,
@@ -1345,7 +1410,7 @@ def _run_command_impl(
                 "and pin fresh IDs if needed.",
             ]
         )
-        raise RuntimeError("\n".join(lines)) from exc
+        raise RuntimeError("\n".join(lines)) from stream_error
 
     nonzero_status_lines = status_counter.nonzero_lines()
     if nonzero_status_lines:
@@ -1368,6 +1433,10 @@ def run_command(args: argparse.Namespace) -> int:
     notifier = RuntimeUserNotifier()
     linux_virtual_mic_lease = LinuxVirtualMicLease()
 
+    result: int | None = None
+    interrupted: KeyboardInterrupt | None = None
+    failure: Exception | None = None
+
     try:
         result = _run_command_impl(
             args,
@@ -1377,29 +1446,33 @@ def run_command(args: argparse.Namespace) -> int:
             linux_virtual_mic_lease=linux_virtual_mic_lease,
         )
     except KeyboardInterrupt as exc:
-        cleanup_success_message, cleanup_handoff_message = (
-            _cleanup_auto_created_linux_virtual_mic(linux_virtual_mic_lease)
-        )
-        note = cleanup_handoff_message or cleanup_success_message
-        if note is not None:
-            base_message = str(exc).strip() or "Interrupted."
-            raise KeyboardInterrupt(_append_user_note(base_message, note)) from exc
-        raise
+        interrupted = exc
     except Exception as exc:
-        cleanup_success_message, cleanup_handoff_message = (
-            _cleanup_auto_created_linux_virtual_mic(linux_virtual_mic_lease)
-        )
-        note = cleanup_handoff_message or cleanup_success_message
-        if note is not None:
-            raise RuntimeError(_append_user_note(str(exc), note)) from exc
-        raise
+        failure = exc
 
     cleanup_success_message, cleanup_handoff_message = (
         _cleanup_auto_created_linux_virtual_mic(linux_virtual_mic_lease)
     )
+    cleanup_note = cleanup_handoff_message or cleanup_success_message
+
+    if interrupted is not None:
+        if cleanup_note is not None:
+            base_message = str(interrupted).strip() or "Interrupted."
+            raise KeyboardInterrupt(
+                _append_user_note(base_message, cleanup_note)
+            ) from interrupted
+        raise interrupted
+
+    if failure is not None:
+        if cleanup_note is not None:
+            raise RuntimeError(_append_user_note(str(failure), cleanup_note)) from failure
+        raise failure
+
     if cleanup_handoff_message is not None:
         raise RuntimeError(cleanup_handoff_message)
+
     if cleanup_success_message is not None:
         print(cleanup_success_message)
         print()
-    return result
+
+    return 0 if result is None else result

@@ -4,6 +4,10 @@ Shared data structures and small stateful helpers.
 These types are deliberately lightweight and easy to reason about. Keeping them
 centralized avoids rediscovering device-selection and callback-state behavior
 across multiple files.
+
+The device-resolution flow intentionally keeps a selected run tied to one
+current PortAudio inventory snapshot so numeric IDs, host API names, and later
+same-host-API validation all refer to the same device table.
 """
 
 from __future__ import annotations
@@ -21,6 +25,20 @@ from .constants import (
 
 
 @dataclass(frozen=True)
+class AudioInventory:
+    """
+    Snapshot of the current PortAudio device view.
+
+    The run path keeps explicit IDs, auto-selection results, and later host API
+    validation tied to one current inventory snapshot after any temporary Linux
+    virtual-mic creation attempt.
+    """
+
+    devices: list[dict]
+    hostapi_names: list[str]
+
+
+@dataclass(frozen=True)
 class DeviceProbe:
     device_id: int
     direction: str
@@ -34,12 +52,41 @@ class DeviceProbe:
 
 
 @dataclass(frozen=True)
+class ProbeSnapshot:
+    """
+    One probing pass over the current audio inventory for a specific sample rate.
+
+    This groups the current inventory together with the derived input/output
+    probes so selection code does not accidentally mix probe results from one
+    device view with host API data from another.
+    """
+
+    inventory: AudioInventory
+    input_probes: list[DeviceProbe]
+    output_probes: list[DeviceProbe]
+
+
+@dataclass(frozen=True)
 class DeviceSelection:
     input_device_id: int
     output_device_id: int
     input_was_auto_selected: bool
     output_was_auto_selected: bool
     linux_virtual_mic_was_auto_created: bool
+
+
+@dataclass(frozen=True)
+class ResolvedRunSelection:
+    """
+    Final device selection paired with the inventory snapshot it came from.
+
+    Keeping these together avoids a subtle class of bugs where a run selects
+    devices from one PortAudio query and later validates host APIs against a
+    different query.
+    """
+
+    selection: DeviceSelection
+    inventory: AudioInventory
 
 
 @dataclass(frozen=True)

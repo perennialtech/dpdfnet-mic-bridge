@@ -205,16 +205,15 @@ def list_devices_command(args: argparse.Namespace) -> int:
             "[note] This script is primarily intended for Windows 10/11 and Linux PipeWire systems, though device listing may still work elsewhere."
         )
 
-    devices, hostapi_names = query_audio_inventory()
+    inventory = query_audio_inventory()
     hostapi_filter = resolve_list_hostapi_filter(
         args.hostapi,
         args.all_apis,
-        hostapi_names,
+        inventory.hostapi_names,
     )
 
     input_probes, output_probes = build_device_probes(
-        devices=devices,
-        hostapi_names=hostapi_names,
+        inventory=inventory,
         hostapi_filter=hostapi_filter,
         samplerate=probe_sample_rate,
     )

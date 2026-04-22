@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import platform
+import shlex
 from typing import Iterable
 
 from .constants import (
@@ -35,7 +36,7 @@ from .constants import (
     LINUX_VIRTUAL_MIC_SINK_NAME,
 )
 from .dependencies import require_sounddevice
-from .domain import DeviceProbe
+from .domain import AudioInventory, DeviceProbe
 
 
 def format_samplerate(value: float) -> str:
@@ -64,15 +65,19 @@ def get_hostapi_names(sd_mod) -> list[str]:
     return [str(item["name"]) for item in hostapis]
 
 
-def query_audio_inventory():
+def query_audio_inventory() -> AudioInventory:
     """
     Query devices and host APIs through sounddevice/PortAudio and turn
     enumeration failures into short user-facing handoffs.
+
+    The returned inventory is normalized to plain Python dict/list structures so
+    later resolution code can keep using one stable snapshot without depending
+    on `sounddevice`'s wrapped objects.
     """
     sd_mod = require_sounddevice()
 
     try:
-        devices = sd_mod.query_devices()
+        devices = [dict(item) for item in sd_mod.query_devices()]
         hostapi_names = get_hostapi_names(sd_mod)
     except Exception as exc:
         detail_text = str(exc).strip()
@@ -86,7 +91,11 @@ def query_audio_inventory():
                 "and if you plan to bridge into VB-CABLE, install it beforehand outside this script."
             )
         elif system == "Linux":
-            guidance = "PortAudio could not enumerate Linux audio devices. Make sure your audio session is running and that your PortAudio build can see the expected PipeWire, PulseAudio, JACK, or ALSA backend."
+            guidance = (
+                "PortAudio could not enumerate Linux audio devices. Make sure your "
+                "audio session is running and that your PortAudio build can see the "
+                "expected PipeWire, PulseAudio, JACK, or ALSA backend."
+            )
         else:
             guidance = "PortAudio could not enumerate audio devices on this system."
 
@@ -94,7 +103,21 @@ def query_audio_inventory():
             f"Could not query audio devices.\n{guidance}\nDetails: {detail}"
         ) from exc
 
-    return devices, hostapi_names
+    return AudioInventory(devices=devices, hostapi_names=hostapi_names)
+
+
+def device_info_from_inventory(inventory: AudioInventory, device_id: int) -> dict:
+    """
+    Return one device info dict from an already-queried inventory snapshot.
+
+    This is intentionally separate from `get_device_info()`, which performs a
+    fresh sounddevice query. The run path uses inventory-based lookup so device
+    selection and later validation stay tied to the same current device table.
+    """
+    if not 0 <= device_id < len(inventory.devices):
+        raise ValueError(f"Invalid device ID {device_id}.")
+
+    return dict(inventory.devices[device_id])
 
 
 def hostapi_filter_key_for_name(hostapi_name: str) -> str | None:
@@ -370,6 +393,25 @@ def same_hostapi_guidance() -> str:
     return "Choose two devices from the same host API."
 
 
+def linux_virtual_mic_command_args() -> tuple[str, ...]:
+    """
+    Return the recommended PipeWire/PulseAudio compatibility command as argv.
+
+    Keep both the display-string form and the executable argv form derived from
+    the same policy so docs and subprocess calls do not drift apart.
+    """
+    return (
+        "pactl",
+        "load-module",
+        "module-null-sink",
+        "media.class=Audio/Source/Virtual",
+        f"sink_name={LINUX_VIRTUAL_MIC_SINK_NAME}",
+        f"sink_properties=device.description={LINUX_VIRTUAL_MIC_DESCRIPTION}",
+        "channels=1",
+        "channel_map=mono",
+    )
+
+
 def linux_virtual_mic_command() -> str:
     """
     Return the recommended PipeWire/PulseAudio compatibility command used in the
@@ -380,13 +422,7 @@ def linux_virtual_mic_command() -> str:
     - `media.class=Audio/Source/Virtual` improves discoverability in apps
     - `channels=1 channel_map=mono` keeps the target explicitly mono
     """
-    return (
-        "pactl load-module module-null-sink "
-        "media.class=Audio/Source/Virtual "
-        f"sink_name={LINUX_VIRTUAL_MIC_SINK_NAME} "
-        f"sink_properties=device.description={LINUX_VIRTUAL_MIC_DESCRIPTION} "
-        "channels=1 channel_map=mono"
-    )
+    return shlex.join(linux_virtual_mic_command_args())
 
 
 def next_power_of_two(value: int) -> int:
@@ -549,8 +585,7 @@ def _probe_sort_key(probe: DeviceProbe) -> tuple[bool, int, int]:
 
 def build_device_probes(
     *,
-    devices,
-    hostapi_names: list[str],
+    inventory: AudioInventory,
     hostapi_filter: str,
     samplerate: int,
 ) -> tuple[list[DeviceProbe], list[DeviceProbe]]:
@@ -562,9 +597,8 @@ def build_device_probes(
         ("output", "max_output_channels", output_probes),
     )
 
-    for device_id, raw_info in enumerate(devices):
-        info = dict(raw_info)
-        hostapi_name = hostapi_name_for_device(info, hostapi_names)
+    for device_id, info in enumerate(inventory.devices):
+        hostapi_name = hostapi_name_for_device(info, inventory.hostapi_names)
 
         if not hostapi_matches_filter(hostapi_name, hostapi_filter):
             continue

@@ -48,8 +48,11 @@ mic_bridge_app/dependencies.py
 mic_bridge_app/domain.py
     Dataclasses and tiny stateful helpers used by device resolution and the
     callback flow:
+    - AudioInventory
     - DeviceProbe
+    - ProbeSnapshot
     - DeviceSelection
+    - ResolvedRunSelection
     - RunConfig
     - LinuxVirtualMicLease
     - AudioFifo
@@ -84,7 +87,8 @@ mic_bridge_app/notifications.py
 
 mic_bridge_app/runtime.py
     The run command:
-    - resolve explicit and auto-selected devices
+    - resolve explicit and auto-selected devices against one concrete current
+      PortAudio inventory snapshot
     - print short handoffs when auto mode cannot choose safely
     - optionally create the recommended temporary Linux virtual mic target
     - build RunConfig
@@ -124,6 +128,12 @@ Input and output must belong to the same PortAudio host API. Recommended choices
 
 - Windows: WASAPI
 - Linux on PipeWire desktops: PipeWire if exposed, otherwise PulseAudio, then JACK, then ALSA
+
+### Keep selection tied to one current PortAudio inventory snapshot
+
+When `run` resolves devices, the selected numeric IDs, host API names, and same-host-API validation should all come from the same current PortAudio device view after any temporary Linux virtual-mic creation attempt.
+
+Do not auto-select from one query and then validate against a different later query unless the design explicitly intends to refresh and re-resolve. If IDs drift between runs, hand off to `list-devices` rather than trying to repair stale IDs by name.
 
 ### Auto mode is strict about outputs
 
@@ -211,6 +221,10 @@ If a rule is platform-specific, device-selection-specific, or model-specific, ke
 
 A small amount of repetition is acceptable when it keeps logic readable. Bad refactors look like: moving one-line operations into separate helpers, introducing utility modules used once, splitting simple workflows into tiny functions that obscure control flow. Good refactors: remove drift-prone duplication, tighten correctness where several places must agree, keep main flows readable top-to-bottom.
 
+### Keep executable command argv and display text derived from one source
+
+If a command is both shown to users and executed by the program, do not build the executable subprocess argv by shell-splitting a human-facing display string. Keep an argv form and derive the display string from it, or derive both from one shared source, so docs and subprocess behavior cannot drift.
+
 ### Keep docs synchronized
 
 If behavior changes, update README.md, relevant docstrings, and this file in the same change. Documentation is part of the design.
@@ -222,7 +236,7 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 1. resolve the model-native sample rate
 2. resolve explicit or auto-selected devices
 3. on Linux, optionally try to create the temporary virtual mic target if output auto-selection needs it (duplicate-aware)
-4. validate same-host-API and device/channel assumptions
+4. validate same-host-API and device/channel assumptions against the same current PortAudio inventory snapshot used for selection
 5. resolve effective block size and negotiated channel counts
 6. print a summary so the user can spot mistakes before audio starts
 7. load `StreamEnhancer`, optionally doing one automatic model download
@@ -274,6 +288,8 @@ If you are an AI assistant editing this repo:
 - if the current run created a Linux target, unload it on every exit path and leave pre-existing user-created targets alone
 - keep Ctrl+C and failed-run handoffs concise and traceback-free
 - if numeric IDs go stale, hand off to `list-devices` rather than fuzzy matching
+- keep device selection, host API names, and same-host-API validation tied to one current PortAudio inventory snapshot after any temporary Linux graph mutation
+- if a command is both displayed and executed, keep argv and display text derived from one shared source instead of shell-splitting documentation text
 - if automatic model download leaves the model unloadable, hand off to manual download
 - do not let auto mode silently route the bridge into speakers, headphones, or monitor/source endpoints
 - keep Linux target creation, cleanup, and model download fail-fast and one-shot

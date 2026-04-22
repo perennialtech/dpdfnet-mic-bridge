@@ -119,6 +119,24 @@ How the alert is surfaced:
 
 The detailed next step still stays in the terminal output. The live alerts are intentionally one-shot and concise so the bridge does not spam you for every single callback status flag.
 
+## Pinned device IDs are intentionally ephemeral
+
+`list-devices` shows the current PortAudio device IDs. Those numeric IDs can change after reboots, hotplug events, backend changes, or audio-session churn.
+
+If a previously working command such as:
+
+```text
+python mic_bridge.py run --input 18 --output 16
+```
+
+stops working, rerun:
+
+```text
+python mic_bridge.py list-devices
+```
+
+and pin fresh IDs. The tool intentionally does not try to repair stale IDs by fuzzy-matching device names.
+
 ## Command overview
 
 ```text
