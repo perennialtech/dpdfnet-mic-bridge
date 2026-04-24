@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Use 'run' to start the bridge and 'list-devices' to inspect or pin IDs.\n"
             "On Linux, 'run' may create a temporary target with:\n"
             f"  {linux_virtual_mic_command()}\n"
-            "Version 0 has no live resampling and no separate validate command.\n"
+            "Version 0 has no live resampling, no sample-rate override, and no separate validate command.\n"
             "Windows virtual-cable setup, such as VB-CABLE, stays outside this tool."
         ),
         formatter_class=argparse.RawTextHelpFormatter,
@@ -60,15 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MODEL,
         help=f"Model whose native sample rate will be probed. Default: {DEFAULT_MODEL}",
     )
-    list_parser.add_argument(
-        "--samplerate",
-        type=int,
-        default=None,
-        help=(
-            "Probe rate in Hz. Version 0 requires the model's native sample "
-            "rate exactly. If omitted, use the model's native rate."
-        ),
-    )
+
     list_parser.add_argument(
         "--hostapi",
         type=str,
@@ -122,15 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MODEL,
         help=f"DPDFNet model to use. Default: {DEFAULT_MODEL}",
     )
-    run_parser.add_argument(
-        "--samplerate",
-        type=int,
-        default=None,
-        help=(
-            "Stream rate in Hz. Version 0 requires the model's native rate "
-            "exactly. If omitted, use the model's native rate."
-        ),
-    )
+
     run_parser.add_argument(
         "--block-ms",
         type=float,

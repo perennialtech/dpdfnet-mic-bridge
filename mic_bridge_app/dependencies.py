@@ -20,21 +20,19 @@ except ImportError:
     dpdfnet_module = None  # type: ignore[assignment]
 
 
-def require_sounddevice():
-    if sounddevice_module is None:
+def _require(module, package_name: str):
+    if module is None:
         raise RuntimeError(
-            "The 'sounddevice' package is not installed.\n"
+            f"The '{package_name}' package is not installed.\n"
             "Install it with:\n"
-            "  pip install sounddevice"
+            f"  pip install {package_name}"
         )
-    return sounddevice_module
+    return module
+
+
+def require_sounddevice():
+    return _require(sounddevice_module, "sounddevice")
 
 
 def require_dpdfnet():
-    if dpdfnet_module is None:
-        raise RuntimeError(
-            "The 'dpdfnet' package is not installed.\n"
-            "Install it with:\n"
-            "  pip install dpdfnet"
-        )
-    return dpdfnet_module
+    return _require(dpdfnet_module, "dpdfnet")

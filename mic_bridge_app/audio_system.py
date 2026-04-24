@@ -47,6 +47,11 @@ _NORMALIZED_HOSTAPI_ALIASES: dict[str, tuple[str, ...]] = {
     for filter_name, aliases in HOSTAPI_FILTER_ALIASES.items()
 }
 
+_DEFAULT_LIST_HOSTAPI_ORDER_BY_SYSTEM: dict[str, tuple[str, ...]] = {
+    "Windows": ("wasapi",),
+    "Linux": ("pipewire", "pulse", "jack", "alsa"),
+}
+
 
 def get_hostapi_names(sd_mod) -> list[str]:
     hostapis = sd_mod.query_hostapis()
@@ -104,21 +109,11 @@ def hostapi_filter_key_for_name(hostapi_name: str) -> str | None:
 
 
 def available_known_hostapi_filters(hostapi_names: list[str]) -> set[str]:
-    available: set[str] = set()
-    for hostapi_name in hostapi_names:
-        key = hostapi_filter_key_for_name(hostapi_name)
-        if key is not None:
-            available.add(key)
-    return available
-
-
-def get_device_info(device_id: int) -> dict:
-    sd_mod = require_sounddevice()
-    try:
-        info = sd_mod.query_devices(device_id)
-    except Exception as exc:
-        raise ValueError(f"Invalid device ID {device_id}: {exc}") from exc
-    return dict(info)
+    return {
+        key
+        for hostapi_name in hostapi_names
+        if (key := hostapi_filter_key_for_name(hostapi_name)) is not None
+    }
 
 
 def hostapi_name_for_device(info: dict, hostapi_names: list[str]) -> str:
@@ -152,14 +147,9 @@ def resolve_list_hostapi_filter(
     current_system = platform.system() if system is None else system
     available = available_known_hostapi_filters(hostapi_names)
 
-    if current_system == "Windows":
-        return "wasapi" if "wasapi" in available else "all"
-
-    if current_system == "Linux":
-        for candidate in ("pipewire", "pulse", "jack", "alsa"):
-            if candidate in available:
-                return candidate
-        return "all"
+    for candidate in _DEFAULT_LIST_HOSTAPI_ORDER_BY_SYSTEM.get(current_system, ()):
+        if candidate in available:
+            return candidate
 
     return "all"
 
@@ -175,56 +165,30 @@ def infer_device_tags(name: str) -> tuple[str, ...]:
     text = name.casefold()
     tags: list[str] = []
 
+    def add(condition: bool, *new_tags: str) -> None:
+        if condition:
+            tags.extend(new_tags)
+
     is_vb_audio = (
         "vb-audio" in text
         or "vb-cable" in text
         or "cable input" in text
         or "cable output" in text
     )
-    if is_vb_audio:
-        tags.append("virtual")
 
-    if "cable input" in text:
-        tags.append("vb-cable-playback")
+    add(is_vb_audio, "virtual")
+    add("cable input" in text, "vb-cable-playback")
+    add("cable output" in text, "vb-cable-recording")
+    add("monitor of" in text or ".monitor" in text, "virtual", "monitor")
+    add("null sink" in text or "virtual sink" in text, "virtual", "virtual-sink")
+    add("virtual source" in text, "virtual", "virtual-source")
+    add("loopback" in text, "virtual")
+    add("dpdfnet" in text, "dpdfnet")
+    add("microphone" in text or " mic" in text or text.startswith("mic "), "mic")
+    add("headphone" in text or "headset" in text, "headphones")
+    add("speaker" in text, "speakers")
 
-    if "cable output" in text:
-        tags.append("vb-cable-recording")
-
-    if "monitor of" in text or ".monitor" in text:
-        tags.append("virtual")
-        tags.append("monitor")
-
-    if "null sink" in text or "virtual sink" in text:
-        tags.append("virtual")
-        tags.append("virtual-sink")
-
-    if "virtual source" in text:
-        tags.append("virtual")
-        tags.append("virtual-source")
-
-    if "loopback" in text:
-        tags.append("virtual")
-
-    if "dpdfnet" in text:
-        tags.append("dpdfnet")
-
-    if "microphone" in text or " mic" in text or text.startswith("mic "):
-        tags.append("mic")
-
-    if "headphone" in text or "headset" in text:
-        tags.append("headphones")
-
-    if "speaker" in text:
-        tags.append("speakers")
-
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for tag in tags:
-        if tag not in seen:
-            seen.add(tag)
-            deduped.append(tag)
-
-    return tuple(deduped)
+    return tuple(dict.fromkeys(tags))
 
 
 def has_bridge_output_tags(tags: tuple[str, ...]) -> bool:
@@ -260,11 +224,11 @@ def probe_device_channels(
     device_id: int,
     direction: str,
     samplerate: int,
+    device_info: dict,
     dtype: str = "float32",
-    device_info: dict | None = None,
 ) -> tuple[int | None, tuple[str, ...]]:
     sd_mod = require_sounddevice()
-    info = dict(device_info) if device_info is not None else get_device_info(device_id)
+    info = dict(device_info)
 
     if direction == "input":
         max_channels = int(info["max_input_channels"])
@@ -301,6 +265,7 @@ def negotiate_stream_channels(
     device_id: int,
     direction: str,
     samplerate: int,
+    device_info: dict,
     dtype: str = "float32",
 ) -> int:
     """Pick an input/output channel count the device can open."""
@@ -308,6 +273,7 @@ def negotiate_stream_channels(
         device_id=device_id,
         direction=direction,
         samplerate=samplerate,
+        device_info=device_info,
         dtype=dtype,
     )
 
@@ -676,4 +642,4 @@ def build_run_command_suggestion(
         ]
     )
 
-    return " ".join(parts)
+    return shlex.join(parts)

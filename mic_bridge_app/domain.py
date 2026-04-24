@@ -204,7 +204,7 @@ class CallbackStatusCounter:
     """
 
     def __init__(self) -> None:
-        self.counts: dict[str, int] = {name: 0 for name in CALLBACK_STATUS_FLAG_NAMES}
+        self.counts: dict[str, int] = dict.fromkeys(CALLBACK_STATUS_FLAG_NAMES, 0)
         self._emitted_first_runtime_issue_alert = False
         self._emitted_repeated_runtime_issue_alert = False
 

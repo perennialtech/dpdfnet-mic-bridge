@@ -146,6 +146,8 @@ python mic_bridge.py run --input 18 --output 16  # pinned manual run
 
 Run-specific flags belong after the explicit `run` subcommand.
 
+Version 0 uses each model's native sample rate directly. There is no live resampling and no sample-rate override flag.
+
 You can also use the package entry point directly:
 
 ```text

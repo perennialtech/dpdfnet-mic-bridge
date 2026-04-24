@@ -45,8 +45,8 @@ mic_bridge_app/domain.py
     - CallbackStatusCounter
 
 mic_bridge_app/modeling.py
-    Model-name to native-sample-rate policy.
-    This is where the "Version 0 does not do live resampling" rule is enforced.
+    Model-name to native-sample-rate policy. Version 0 exposes no live
+    sample-rate override; the selected model determines the stream rate.
 
 mic_bridge_app/audio_system.py
     PortAudio and sounddevice behavior:
@@ -98,7 +98,7 @@ The model is not a simple waveform-in, waveform-out black box. Real-time use req
 
 ### No live resampling
 
-The stream sample rate must exactly match the model's native sample rate. For `dpdfnet8_48khz_hr`, that means 48,000 Hz. This policy is enforced in `modeling.py`.
+The stream sample rate is the selected model's native sample rate. For `dpdfnet8_48khz_hr`, that means 48,000 Hz. Version 0 intentionally exposes no `--samplerate` override because accepting arbitrary rates would imply live resampling that the bridge does not do. This policy is enforced in `modeling.py`.
 
 ### Single full-duplex stream
 
@@ -219,7 +219,7 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 
 ### `run`
 
-1. resolve the model-native sample rate
+1. resolve the selected model's native sample rate
 2. resolve explicit or auto-selected devices
 3. on Linux, optionally try to create the temporary virtual mic target if output auto-selection needs it (duplicate-aware)
 4. validate same-host-API and device/channel assumptions against the same current PortAudio inventory snapshot used for selection
@@ -232,7 +232,7 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 
 ### `list-devices`
 
-1. resolve the model-native sample rate
+1. resolve the selected model's native sample rate
 2. choose a platform-friendly default host API filter
 3. probe devices for openability at that sample rate
 4. print a likely pinned command when a good pair is obvious

@@ -32,7 +32,7 @@ from .constants import (
 )
 
 from .domain import DeviceProbe
-from .modeling import resolve_stream_sample_rate
+from .modeling import model_native_sample_rate
 
 
 def _eprint(*args: object) -> None:
@@ -134,11 +134,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
 
 
 def list_devices_command(args: argparse.Namespace) -> int:
-    probe_sample_rate = resolve_stream_sample_rate(
-        args.model,
-        args.samplerate,
-        context="device listing",
-    )
+    probe_sample_rate = model_native_sample_rate(args.model)
 
     if platform.system() not in ("Windows", "Linux"):
         _eprint(

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import platform
+from collections.abc import Callable
 import shutil
 import subprocess
 import sys
@@ -58,7 +59,7 @@ from .domain import (
     ResolvedRunSelection,
     RunConfig,
 )
-from .modeling import resolve_stream_sample_rate
+from .modeling import model_native_sample_rate
 from .notifications import RuntimeUserNotifier
 
 _CALLBACK_RUNTIME_ISSUE_LABELS: dict[str, str] = {
@@ -87,6 +88,10 @@ def _scan_all_device_probes(sample_rate: int) -> ProbeSnapshot:
     )
 
 
+def _list_devices_handoff(next_step: str) -> str:
+    return f"Run:\n  python mic_bridge.py list-devices\n{next_step}"
+
+
 def _get_current_run_device_info(
     *,
     inventory: AudioInventory,
@@ -111,41 +116,28 @@ def _get_current_run_device_info(
             )
 
         lines.extend(
-            [
-                "Run:",
-                "  python mic_bridge.py list-devices",
-                f"Then retry with a fresh --{role} <id>.",
-            ]
+            _list_devices_handoff(
+                f"Then retry with a fresh --{role} <id>."
+            ).splitlines()
         )
         raise ValueError("\n".join(lines)) from exc
 
 
+def _hostapis_for(
+    probes: list[DeviceProbe],
+    predicate: Callable[[DeviceProbe], bool],
+) -> list[str]:
+    return list(
+        dict.fromkeys(probe.hostapi_name for probe in probes if predicate(probe))
+    )
+
+
 def _candidate_input_hostapis(input_probes: list[DeviceProbe]) -> list[str]:
-    names: list[str] = []
-    seen: set[str] = set()
-
-    for probe in input_probes:
-        if not is_viable_auto_input_candidate(probe):
-            continue
-        if probe.hostapi_name not in seen:
-            seen.add(probe.hostapi_name)
-            names.append(probe.hostapi_name)
-
-    return names
+    return _hostapis_for(input_probes, is_viable_auto_input_candidate)
 
 
 def _bridge_output_hostapis(output_probes: list[DeviceProbe]) -> list[str]:
-    names: list[str] = []
-    seen: set[str] = set()
-
-    for probe in output_probes:
-        if not is_likely_virtual_bridge_output(probe):
-            continue
-        if probe.hostapi_name not in seen:
-            seen.add(probe.hostapi_name)
-            names.append(probe.hostapi_name)
-
-    return names
+    return _hostapis_for(output_probes, is_likely_virtual_bridge_output)
 
 
 def _first_line(text: str | None) -> str | None:
@@ -175,17 +167,13 @@ def _build_no_auto_input_handoff(
             "Could not auto-select an input on the chosen output host API.\n\n"
             f"Output host API: {output_hostapi_name}\n"
             f"Microphone-like inputs seen on: {', '.join(visible_input_hostapis)}\n"
-            "Run:\n"
-            "  python mic_bridge.py list-devices\n"
-            "Then pin --input <id> and --output <id>."
+            + _list_devices_handoff("Then pin --input <id> and --output <id>.")
         )
 
     return (
         "Could not auto-select a microphone input.\n\n"
         f"No likely microphone input opened at {sample_rate} Hz.\n"
-        "Run:\n"
-        "  python mic_bridge.py list-devices\n"
-        "Then pin --input <id> and --output <id>."
+        + _list_devices_handoff("Then pin --input <id> and --output <id>.")
     )
 
 
@@ -202,9 +190,7 @@ def _build_no_auto_output_handoff(
             "Could not auto-select an output on the chosen input host API.\n\n"
             f"Input host API: {input_hostapi_name}\n"
             f"Visible bridge outputs use: {', '.join(visible_bridge_hostapis)}\n"
-            "Run:\n"
-            "  python mic_bridge.py list-devices\n"
-            "Then re-run with matching IDs."
+            + _list_devices_handoff("Then re-run with matching IDs.")
         )
 
     system = platform.system()
@@ -213,9 +199,9 @@ def _build_no_auto_output_handoff(
         return (
             "Could not auto-select a bridge output.\n\n"
             "Auto mode only picks bridge targets such as VB-CABLE 'CABLE Input', never speakers/headphones or 'CABLE Output'.\n"
-            "Run:\n"
-            "  python mic_bridge.py list-devices\n"
-            "Then pin --output <id>, or both --input <id> and --output <id>."
+            + _list_devices_handoff(
+                "Then pin --output <id>, or both --input <id> and --output <id>."
+            )
         )
 
     if system == "Linux":
@@ -225,18 +211,16 @@ def _build_no_auto_output_handoff(
             "Could not auto-select a bridge output.\n\n"
             "Auto mode only picks virtual mic targets, never speakers/headphones or monitor/source endpoints.\n"
             f"{extra_note}"
-            "Run:\n"
-            "  python mic_bridge.py list-devices\n"
-            "Create a reusable target with:\n"
+            "Run:\n  python mic_bridge.py list-devices\nCreate a reusable target with:\n"
             f"  {linux_virtual_mic_command()}"
         )
 
     return (
         "Could not auto-select a bridge output.\n\n"
         "Auto mode only picks likely bridge-style outputs, not ordinary speakers/headphones or monitor/source endpoints.\n"
-        "Run:\n"
-        "  python mic_bridge.py list-devices\n"
-        "Then re-run with --output <id> or with both --input <id> and --output <id>."
+        + _list_devices_handoff(
+            "Then re-run with --output <id> or with both --input <id> and --output <id>."
+        )
     )
 
 
@@ -268,9 +252,7 @@ def _build_no_auto_pair_handoff(
         "Could not auto-match an input and bridge output on the same host API.\n\n"
         f"Visible microphone-like inputs use: {', '.join(visible_input_hostapis)}\n"
         f"Visible bridge outputs use: {', '.join(visible_bridge_hostapis)}\n"
-        "Run:\n"
-        "  python mic_bridge.py list-devices\n"
-        "Then pin matching IDs."
+        + _list_devices_handoff("Then pin matching IDs.")
     )
 
 
@@ -764,7 +746,7 @@ def _build_run_config(
     This enforces sample-rate, host-API, channel, and block-size policy.
     """
 
-    sample_rate = resolve_stream_sample_rate(args.model, args.samplerate, context="run")
+    sample_rate = model_native_sample_rate(args.model)
 
     requested_input_id = None if args.input is None else int(args.input)
     requested_output_id = None if args.output is None else int(args.output)
@@ -821,12 +803,14 @@ def _build_run_config(
         device_id=selection.input_device_id,
         direction="input",
         samplerate=sample_rate,
+        device_info=input_info,
         dtype="float32",
     )
     output_channels = negotiate_stream_channels(
         device_id=selection.output_device_id,
         direction="output",
         samplerate=sample_rate,
+        device_info=output_info,
         dtype="float32",
     )
 
@@ -1263,11 +1247,9 @@ def _run_command_impl(
             if detail is not None:
                 lines.append(f"Details: {detail}")
             lines.extend(
-                [
-                    "Run:",
-                    "  python mic_bridge.py list-devices",
-                    "Then retry, or try a different device pair or block size.",
-                ]
+                _list_devices_handoff(
+                    "Then retry, or try a different device pair or block size."
+                ).splitlines()
             )
             raise RuntimeError("\n".join(lines)) from fatal_callback_error[0]
 
@@ -1281,11 +1263,7 @@ def _run_command_impl(
 
         lines = ["Failed to open or run the audio stream.", f"Details: {detail}"]
         lines.extend(
-            [
-                "Run:",
-                "  python mic_bridge.py list-devices",
-                "Then retry with fresh IDs if needed.",
-            ]
+            _list_devices_handoff("Then retry with fresh IDs if needed.").splitlines()
         )
         raise RuntimeError("\n".join(lines)) from stream_error
 

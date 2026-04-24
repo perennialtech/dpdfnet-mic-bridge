@@ -1,8 +1,8 @@
 """
 Model and sample-rate policy.
 
-Version 0 intentionally avoids live resampling. This module is the single place
-where that rule is enforced so future edits do not scatter the policy.
+Version 0 intentionally avoids live resampling. The selected model determines
+the stream rate; there is no sample-rate override flag.
 """
 
 from __future__ import annotations
@@ -18,22 +18,3 @@ def model_native_sample_rate(model_name: str) -> int:
         raise ValueError(
             f"Unsupported model '{model_name}'. Supported models: {supported}"
         ) from exc
-
-
-def resolve_stream_sample_rate(
-    model_name: str,
-    samplerate: int | None,
-    *,
-    context: str,
-) -> int:
-    model_sr = model_native_sample_rate(model_name)
-    sample_rate = model_sr if samplerate is None else int(samplerate)
-
-    if sample_rate != model_sr:
-        raise ValueError(
-            f"Version 0 does not do live resampling.\n"
-            f"Model '{model_name}' expects {model_sr} Hz, but --samplerate={sample_rate} was requested for {context}.\n"
-            f"Use --samplerate {model_sr} or omit --samplerate."
-        )
-
-    return sample_rate
