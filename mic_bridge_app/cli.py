@@ -21,20 +21,13 @@ from .constants import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire setups.\n"
-            "Running with no subcommand shows this top-level help.\n"
-            "Use the 'run' subcommand to start the live bridge:\n"
-            "  python mic_bridge.py run\n"
-            "The run command can auto-select a safe microphone input and bridge-style output.\n"
-            "On Linux, if 'run' is used without --output and no likely virtual mic target is visible,\n"
-            "the run command tries to create a temporary target for that run:\n"
+            "DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire.\n"
+            "No subcommand shows this help.\n"
+            "Use 'run' to start the bridge and 'list-devices' to inspect or pin IDs.\n"
+            "On Linux, 'run' may create a temporary target with:\n"
             f"  {linux_virtual_mic_command()}\n"
-            "If this script creates that Linux target, it removes it on exit.\n"
-            "During a live run, important problems such as repeated audio glitches or\n"
-            "unexpected stream loss trigger a concise attention alert.\n"
-            "On Windows, VB-CABLE still needs to be installed outside the script.\n"
-            "Use 'list-devices' when you want to inspect, pin, or troubleshoot device IDs.\n"
-            "Version 0 intentionally has no separate 'validate' subcommand."
+            "Version 0 has no live resampling and no separate validate command.\n"
+            "Windows virtual-cable setup, such as VB-CABLE, stays outside this tool."
         ),
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=(
@@ -43,7 +36,6 @@ def build_parser() -> argparse.ArgumentParser:
             "  python mic_bridge.py run\n"
             "  python mic_bridge.py run --input 18 --output 16\n"
             "  python mic_bridge.py list-devices\n"
-            "  python -m mic_bridge_app\n"
             "  python -m mic_bridge_app run\n"
         ),
     )
@@ -55,13 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inspect devices and pin numeric IDs when auto mode needs help.",
         formatter_class=argparse.RawTextHelpFormatter,
         description=(
-            "Fallback device discovery for the mic bridge.\n"
-            "Start with top-level help or run 'python mic_bridge.py run' first.\n"
-            "On Windows, the default view is filtered to WASAPI because that is the\n"
-            "recommended starting point for this bridge.\n"
-            "On Linux, the default view prefers a PipeWire host API if your PortAudio\n"
-            "build exposes one, otherwise PulseAudio, then JACK, then ALSA.\n"
-            "Use --all-apis to show every PortAudio host API instead."
+            "Inspect PortAudio devices at the model's native sample rate.\n"
+            "Windows defaults to WASAPI.\n"
+            "Linux defaults to PipeWire if available, otherwise PulseAudio, JACK, then ALSA.\n"
+            "Use --all-apis to show every host API."
         ),
     )
     list_parser.add_argument(
@@ -69,15 +58,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         choices=sorted(MODEL_SAMPLE_RATES),
         default=DEFAULT_MODEL,
-        help=f"DPDFNet model whose native sample rate will be probed. Default: {DEFAULT_MODEL}",
+        help=f"Model whose native sample rate will be probed. Default: {DEFAULT_MODEL}",
     )
     list_parser.add_argument(
         "--samplerate",
         type=int,
         default=None,
         help=(
-            "Probe sample rate in Hz. In Version 0 this must match the model's native "
-            "sample rate exactly. If omitted, the model's native rate is used."
+            "Probe rate in Hz. Version 0 requires the model's native sample "
+            "rate exactly. If omitted, use the model's native rate."
         ),
     )
     list_parser.add_argument(
@@ -86,10 +75,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=LIST_DEVICE_HOSTAPI_CHOICES,
         default=None,
         help=(
-            "Host API filter for listing.\n"
+            "Host API filter.\n"
             "Windows default: WASAPI.\n"
             "Linux default: PipeWire if available, otherwise PulseAudio, JACK, then ALSA.\n"
-            "Use --hostapi all or --all-apis to show every PortAudio host API."
         ),
     )
     list_parser.add_argument(
@@ -103,12 +91,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the live bridge, auto-selecting devices when safely possible.",
         formatter_class=argparse.RawTextHelpFormatter,
         description=(
-            "Run the live microphone -> DPDFNet -> output-device bridge.\n"
-            "If --input and/or --output are omitted, the command tries to auto-select them.\n"
-            "Auto-output selection is intentionally strict and will not silently pick\n"
-            "speakers, headphones, or monitor/source endpoints as the bridge output.\n"
-            "During an active run, important problems such as repeated real-time glitches\n"
-            "or an unexpected stream stop trigger a concise attention alert."
+            "Run the live mic -> DPDFNet -> output bridge.\n"
+            "If --input and/or --output are omitted, the command auto-selects them when safe.\n"
+            "Auto output never falls back to speakers, headphones, or monitor/source endpoints."
         ),
     )
     run_parser.add_argument(
@@ -116,8 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         required=False,
         help=(
-            "Numeric input device ID.\n"
-            "If omitted, the command tries to auto-select a likely physical microphone."
+            "Numeric input device ID. If omitted, auto-select a likely physical microphone."
         ),
     )
     run_parser.add_argument(
@@ -126,11 +110,9 @@ def build_parser() -> argparse.ArgumentParser:
         required=False,
         help=(
             "Numeric output device ID.\n"
-            "If omitted, the command tries to auto-select a likely bridge output.\n"
-            "Windows: typically the VB-CABLE playback endpoint named 'CABLE Input'.\n"
-            "Linux/PipeWire: a likely virtual mic target, temporarily creating the\n"
-            "recommended one for the current run if none is visible and pactl is available.\n"
-            "That auto-created Linux target is removed on exit.\n"
+            "If omitted, auto-select a likely bridge output.\n"
+            "Windows: usually VB-CABLE 'CABLE Input'.\n"
+            "Linux: may create a temporary DPDFNet_Mic target when none is visible."
         ),
     )
     run_parser.add_argument(
@@ -145,8 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help=(
-            "Stream sample rate in Hz. In Version 0 this must match the model's native "
-            "sample rate exactly. If omitted, the model's native rate is used."
+            "Stream rate in Hz. Version 0 requires the model's native rate "
+            "exactly. If omitted, use the model's native rate."
         ),
     )
     run_parser.add_argument(
@@ -155,12 +137,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Callback block size in milliseconds.\n"
-            "If omitted, the default is backend-aware:\n"
-            "  - Linux/JACK: auto-select an exact JACK-friendly block size,\n"
-            "    typically 21.333 ms at 48 kHz\n"
+            "If omitted:\n"
+            "  - Linux/JACK uses an exact JACK-friendly size, typically 21.333 ms at 48 kHz\n"
             "  - other backends: 10.0 ms\n"
-            "If you override this on Linux/JACK and hear crackle/stutter,\n"
-            "prefer exact values such as 10.667 or 21.333 ms at 48 kHz."
+            "If you override this on Linux/JACK and hear glitches, try exact values such as 10.667 or 21.333 ms."
         ),
     )
     run_parser.add_argument(
@@ -173,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Enable verbose DPDFNet model resolution / download logging.",
+        help="Enable verbose DPDFNet model logging.",
     )
 
     return parser

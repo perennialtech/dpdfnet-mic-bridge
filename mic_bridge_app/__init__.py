@@ -1,16 +1,12 @@
 """
-Internal implementation package for the mic bridge command-line tool.
+Internal package for the mic bridge CLI.
 
-Public entry points:
+Entry points:
 - `python mic_bridge.py ...`
 - `python -m mic_bridge_app ...`
 
-When no subcommand is provided, the launcher shows top-level help.
-
-To run the live bridge explicitly, use the `run` subcommand.
-Run-specific flags belong after that subcommand.
-
-Before changing behavior, read `ARCHITECTURE.md`.
+No subcommand shows top-level help.
+Use `run` to start the live bridge.
 """
 
 from .app import main

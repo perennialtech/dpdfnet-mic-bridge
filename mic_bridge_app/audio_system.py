@@ -1,20 +1,8 @@
 """
-Platform-audio policy and device probing helpers.
+Audio-system policy and probing helpers.
 
-This module owns the rules that depend on PortAudio host APIs, sounddevice
-device metadata, and backend-specific stream behavior, especially Windows
-WASAPI preferences, Linux/PipeWire/JACK handling, and the candidate policy used
-by auto-selection.
-
-Keep user-facing workflow text in `listing.py` and `runtime.py`. Keep parser
-definition in `cli.py`. This file should focus on reusable audio-system logic.
-
-Keep bridge-output identification centralized here so auto-selection, pinned
-pair suggestions, and runtime warnings stay aligned.
-
-Refactor guardrail:
-Prefer a few cohesive helpers over many one-line wrappers. This module is meant
-to centralize policy, not to fragment straightforward code into helper-sprawl.
+This module owns PortAudio host-API policy, device tagging, probing, scoring,
+auto-selection rules, and Linux/JACK block-size behavior.
 """
 
 from __future__ import annotations
@@ -66,14 +54,7 @@ def get_hostapi_names(sd_mod) -> list[str]:
 
 
 def query_audio_inventory() -> AudioInventory:
-    """
-    Query devices and host APIs through sounddevice/PortAudio and turn
-    enumeration failures into short user-facing handoffs.
-
-    The returned inventory is normalized to plain Python dict/list structures so
-    later resolution code can keep using one stable snapshot without depending
-    on `sounddevice`'s wrapped objects.
-    """
+    """Query PortAudio once and return a plain-Python inventory snapshot."""
     sd_mod = require_sounddevice()
 
     try:
@@ -107,13 +88,7 @@ def query_audio_inventory() -> AudioInventory:
 
 
 def device_info_from_inventory(inventory: AudioInventory, device_id: int) -> dict:
-    """
-    Return one device info dict from an already-queried inventory snapshot.
-
-    This is intentionally separate from `get_device_info()`, which performs a
-    fresh sounddevice query. The run path uses inventory-based lookup so device
-    selection and later validation stay tied to the same current device table.
-    """
+    """Resolve one device from an existing inventory snapshot."""
     if not 0 <= device_id < len(inventory.devices):
         raise ValueError(f"Invalid device ID {device_id}.")
 
@@ -253,12 +228,7 @@ def infer_device_tags(name: str) -> tuple[str, ...]:
 
 
 def has_bridge_output_tags(tags: tuple[str, ...]) -> bool:
-    """
-    Return whether name-derived tags positively identify a bridge-style output.
-
-    Keep the positive-tag rule centralized here so runtime warnings do not drift
-    away from auto-selection policy.
-    """
+    """Return whether tags positively identify a bridge-style output."""
     tag_set = set(tags)
     return (
         "vb-cable-playback" in tag_set
@@ -268,14 +238,7 @@ def has_bridge_output_tags(tags: tuple[str, ...]) -> bool:
 
 
 def iter_input_channel_candidates(max_channels: int) -> Iterable[int]:
-    """
-    Prefer mono first, then stereo, then native max as a last resort.
-
-    Why:
-    - mono is ideal for a speech denoiser
-    - stereo often works if mono-open fails on quirky devices
-    - max-channels is a final fallback for devices with odd constraints
-    """
+    """Prefer mono, then stereo, then native max."""
     seen: set[int] = set()
     for candidate in (1, 2, max_channels):
         if 1 <= candidate <= max_channels and candidate not in seen:
@@ -284,16 +247,7 @@ def iter_input_channel_candidates(max_channels: int) -> Iterable[int]:
 
 
 def iter_output_channel_candidates(max_channels: int) -> Iterable[int]:
-    """
-    Prefer stereo first, then mono, then native max as a last resort.
-
-    Why:
-    - the bridge output is enhanced mono
-    - if we open 2 output channels, we duplicate mono into both channels
-    - opening a stereo-ish sink as 1 channel can map to left-only on some
-      Linux virtual devices and sinks
-    - max-channels is still a fallback for odd devices
-    """
+    """Prefer stereo, then mono, then native max."""
     seen: set[int] = set()
     for candidate in (2, 1, max_channels):
         if 1 <= candidate <= max_channels and candidate not in seen:
@@ -349,20 +303,7 @@ def negotiate_stream_channels(
     samplerate: int,
     dtype: str = "float32",
 ) -> int:
-    """
-    Pick a channel count that the selected device can open.
-
-    For input:
-    - prefer mono, then stereo, then native max
-    - any opened input will later be downmixed to mono before enhancement
-
-    For output:
-    - prefer stereo, then mono, then native max
-    - enhanced mono will later be duplicated across every opened output channel
-
-    The input/output preference split is deliberate. Mono is ideal for capture,
-    but mono-open on some output devices can produce left-only audio.
-    """
+    """Pick an input/output channel count the device can open."""
     channels, failures = probe_device_channels(
         device_id=device_id,
         direction=direction,
@@ -394,12 +335,7 @@ def same_hostapi_guidance() -> str:
 
 
 def linux_virtual_mic_command_args() -> tuple[str, ...]:
-    """
-    Return the recommended PipeWire/PulseAudio compatibility command as argv.
-
-    Keep both the display-string form and the executable argv form derived from
-    the same policy so docs and subprocess calls do not drift apart.
-    """
+    """Return the recommended `pactl load-module ...` command as argv."""
     return (
         "pactl",
         "load-module",
@@ -413,15 +349,7 @@ def linux_virtual_mic_command_args() -> tuple[str, ...]:
 
 
 def linux_virtual_mic_command() -> str:
-    """
-    Return the recommended PipeWire/PulseAudio compatibility command used in the
-    Linux docs and usage notes, both for users who want a reusable manual
-    target and as the basis for the script's temporary auto-created one.
-
-    This is intentionally very specific:
-    - `media.class=Audio/Source/Virtual` improves discoverability in apps
-    - `channels=1 channel_map=mono` keeps the target explicitly mono
-    """
+    """Return the same recommended Linux virtual-mic command as display text."""
     return shlex.join(linux_virtual_mic_command_args())
 
 
@@ -447,21 +375,7 @@ def format_jack_block_ms_hints(sample_rate: int) -> str:
 
 
 def recommended_linux_jack_block_frames(sample_rate: int) -> int:
-    """
-    Choose a forgiving exact block size for Linux/JACK when the user did not
-    explicitly request one.
-
-    Why not raw 10.0 ms?
-    - at 48 kHz, 10.0 ms is 480 frames, which is not a typical JACK-friendly
-      exact frame count
-    - Python + PortAudio often behaves better with exact frame counts here
-    - using a roomier default reduces real-world stutter/crackle reports
-
-    Current rule:
-    - at least ~20 ms worth of audio
-    - at least 512 frames
-    - rounded up to the next power of two
-    """
+    """Return a conservative exact block size for Linux/JACK auto mode."""
     target_frames = max(
         int(math.ceil(sample_rate * (LINUX_JACK_AUTO_MIN_BLOCK_MS / 1000.0))),
         LINUX_JACK_AUTO_MIN_BLOCK_FRAMES,

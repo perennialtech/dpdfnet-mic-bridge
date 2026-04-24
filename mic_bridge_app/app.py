@@ -1,10 +1,8 @@
 """
 Top-level CLI dispatch.
 
-Keep this file intentionally small. It owns parser construction, light argv
-normalization for no-argument help and explicit-subcommand handoffs, command
-dispatch, and top-level error formatting. Command implementations live in
-`listing.py` and `runtime.py`.
+This file stays small: argv normalization, parser setup, command dispatch, and
+top-level error formatting. Command implementations live in `listing.py` and `runtime.py`.
 """
 
 from __future__ import annotations

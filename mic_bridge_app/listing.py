@@ -39,6 +39,11 @@ def _eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
 
 
+def _print_lines(lines: list[str]) -> None:
+    for line in lines:
+        print(line)
+
+
 def _print_probe_section(
     *,
     title: str,
@@ -68,128 +73,63 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
     system = platform.system()
 
     if system == "Windows":
-        print("Windows usage notes:")
-        print("  - Fast path: try python mic_bridge.py run first.")
-        print(
-            "  - Auto mode only picks likely bridge outputs such as VB-CABLE 'CABLE Input',"
+        _print_lines(
+            [
+                "Windows notes:",
+                "  - Try: python mic_bridge.py run",
+                f"  - Probe results show whether a device opens at {samplerate} Hz.",
+                "  - Auto output only picks bridge targets such as VB-CABLE 'CABLE Input'.",
+                "  - Apps should use VB-CABLE 'CABLE Output' as the microphone.",
+                "  - If auto mode stops, run list-devices and pin --input/--output IDs.",
+                "  - Device IDs can drift, rerun list-devices when they do.",
+                "  - Version 0 has no separate validate command, use run and stop with Ctrl+C.",
+            ]
         )
-        print("    never speakers/headphones or the recording-side endpoint.")
-        print(
-            "  - VB-CABLE still needs to be installed and configured outside this script."
-        )
-        print("  - For VB-CABLE:")
-        print(
-            "      * this script should OUTPUT to the playback endpoint, usually named 'CABLE Input'"
-        )
-        print(
-            "      * your apps should READ from the recording endpoint, usually named 'CABLE Output'"
-        )
-        print(
-            f"  - Probe results above show whether a device can open at {samplerate} Hz."
-        )
-        print(
-            "  - If auto mode stops, use the IDs above with python mic_bridge.py run --input <id> --output <id>."
-        )
-        print(
-            "  - Pinned numeric IDs may change after reboots or device churn. If a previously"
-        )
-        print("    working ID stops working, rerun list-devices and pin fresh IDs.")
-        print("  - Version 0 intentionally has no separate 'validate' command.")
-        print("    Use the run path and stop it with Ctrl+C as the quick smoke test.")
         print()
         return
 
     if system == "Linux":
-        print("Linux PipeWire usage notes:")
-        print("  - Fast path: try python mic_bridge.py run first.")
-        print("  - This script uses the PortAudio host APIs exposed by sounddevice.")
-        print(
-            "  - On PipeWire systems, prefer a real 'PipeWire' host API if your PortAudio build has one,"
-        )
-        print("    otherwise prefer PulseAudio, then JACK, then ALSA.")
-        print("  - Keep --input and --output on the same host API.")
-        print(
-            "  - Auto mode only picks likely virtual mic targets for output, never speakers/headphones"
-        )
-        print("    or monitor/source endpoints.")
-        print(
-            "  - If --output is omitted and no likely virtual target is visible, the run path tries"
-        )
-        print(
-            f"    to create a temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target automatically with pactl."
-        )
-        print(
-            f"  - If it creates that temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target, it removes it on exit"
-        )
-        print("    and also removes it on failed/interrupted setup paths.")
-        print(
-            "  - If a temporary target is created but PortAudio still cannot use it as a"
-        )
-        print("    usable output, the run path removes it before handing off.")
-        print(
-            "  - If that target already exists but PortAudio still cannot use it, the run path"
-        )
-        print("    hands off instead of trying to stack duplicate copies.")
-        print(
-            "  - If you want a Linux virtual mic target to keep showing up between runs or in"
-        )
-        print("    list-devices, create it yourself with:")
-        print(f"      {linux_virtual_mic_command()}")
-        print("  - Why this form:")
-        print(
-            "      * `media.class=Audio/Source/Virtual` makes many apps expose it more like a mic"
-        )
-        print(
-            "      * `channels=1 channel_map=mono` keeps it explicitly mono and avoids left/right surprises"
-        )
-        print(
-            "      * the bridge still writes to it as an output/playback device, despite the mic-like naming"
-        )
-        print(
-            f"  - Probe results above show whether a device can open at {samplerate} Hz."
-        )
-        print(
-            f"  - In apps, first try choosing '{LINUX_VIRTUAL_MIC_DESCRIPTION}' directly as the microphone."
-        )
-        print(
-            "    If a given app does not list it directly, try the matching monitor/source instead."
-        )
+        lines = [
+            "Linux notes:",
+            "  - Try: python mic_bridge.py run",
+            "  - Keep input and output on the same host API.",
+            "  - Auto output only picks virtual mic targets, never speakers/headphones or monitor/source endpoints.",
+            f"  - If none is visible, run may create a temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target.",
+            "  - A target created by the run is removed on exit.",
+            "  - For a reusable target, create it yourself with:",
+            f"      {linux_virtual_mic_command()}",
+            f"  - Probe results show whether a device opens at {samplerate} Hz.",
+            f"  - In apps, try '{LINUX_VIRTUAL_MIC_DESCRIPTION}' first, then its monitor/source if needed.",
+        ]
         if hostapi_filter == "jack":
             auto_frames = recommended_linux_jack_block_frames(samplerate)
             auto_ms = jack_block_ms_for_frames(auto_frames, samplerate)
-            print("  - Your current device view is using JACK.")
-            print(
-                "  - On Linux/JACK, if you omit --block-ms, 'run' auto-selects an exact JACK-friendly"
+            lines.extend(
+                [
+                    "  - JACK note: omitting --block-ms uses an exact JACK-friendly block size.",
+                    f"    Default: {auto_ms:.3f} ms ({auto_frames} frames) at {samplerate} Hz.",
+                    f"    If you override it and hear glitches, try {format_jack_block_ms_hints(samplerate)} ms.",
+                ]
             )
-            print(
-                f"    block size, typically {auto_ms:.3f} ms ({auto_frames} frames) at {samplerate} Hz."
-            )
-            print(
-                "    This avoids a common glitch case where raw 10.0 ms becomes a non-exact frame count."
-            )
-            print(
-                "  - If you override --block-ms on JACK and hear crackle/stutter, try exact values such as:"
-            )
-            print(f"      {format_jack_block_ms_hints(samplerate)} ms")
-        print(
-            "  - If auto mode stops, use the IDs above with python mic_bridge.py run --input <id> --output <id>."
+        lines.extend(
+            [
+                "  - If auto mode stops, run list-devices and pin --input/--output IDs.",
+                "  - Device IDs can drift, rerun list-devices when they do.",
+                "  - Version 0 has no separate validate command, use run and stop with Ctrl+C.",
+            ]
         )
-        print(
-            "  - Pinned numeric IDs may change after reboots or backend/device churn. If a previously"
-        )
-        print("    working ID stops working, rerun list-devices and pin fresh IDs.")
-        print("  - Version 0 intentionally has no separate 'validate' command.")
-        print("    Use the run path and stop it with Ctrl+C as the quick smoke test.")
+        _print_lines(lines)
         print()
         return
 
-    print("Platform usage notes:")
-    print(
-        "  - This script is primarily intended for Windows 10/11 and Linux systems running PipeWire."
+    _print_lines(
+        [
+            "Platform notes:",
+            "  - Try: python mic_bridge.py run",
+            f"  - Probe results show whether a device opens at {samplerate} Hz.",
+            "  - If pinned IDs stop working after device churn, rerun list-devices.",
+        ]
     )
-    print("  - Fast path: try python mic_bridge.py run first.")
-    print(f"  - Probe results above show whether a device can open at {samplerate} Hz.")
-    print("  - If pinned IDs stop working after device churn, rerun list-devices.")
     print()
 
 
@@ -225,13 +165,11 @@ def list_devices_command(args: argparse.Namespace) -> int:
     )
 
     print()
-    print(f"Device discovery for model {args.model} @ {probe_sample_rate} Hz")
-    print(
-        f"Fast path: try {fast_path_command} first. Use this command when auto mode needs a manual handoff or when you want to pin IDs."
-    )
-    print(f"Host API filter: {HOSTAPI_FILTER_DISPLAY_NAMES[hostapi_filter]}")
+    print(f"Device discovery for {args.model} @ {probe_sample_rate} Hz")
+    print(f"Fast path : {fast_path_command}")
+    print(f"Host API  : {HOSTAPI_FILTER_DISPLAY_NAMES[hostapi_filter]}")
     if hostapi_filter != "all":
-        print("Use --all-apis to show every PortAudio device.")
+        print("Tip       : use --all-apis to show every PortAudio device.")
     print()
 
     _print_probe_section(
@@ -249,7 +187,7 @@ def list_devices_command(args: argparse.Namespace) -> int:
 
     if hostapi_filter != "all" and not input_probes and not output_probes:
         print(
-            f"No devices matched the current Host API filter '{hostapi_filter}'. Try --all-apis."
+            f"No devices matched the current host API filter '{hostapi_filter}'. Try --all-apis."
         )
         print()
 
@@ -268,7 +206,7 @@ def list_devices_command(args: argparse.Namespace) -> int:
     suggested_pair = suggest_run_pair(input_probes, output_probes)
     if suggested_pair is not None:
         input_probe, output_probe = suggested_pair
-        print("Pinned pair:")
+        print("Suggested pinned command:")
         print(
             "  "
             + build_run_command_suggestion(

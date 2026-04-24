@@ -1,23 +1,10 @@
 # Mic bridge architecture
 
-This document is the handoff memo for future maintainers and future AI coding sessions. Read this before changing behavior.
+This is the maintainer handoff note. Read it before changing behavior.
 
 ## Purpose of the split
 
-The code is split so policy boundaries stay easy to find and audit:
-
-- entry-point behavior
-- parser construction
-- dependency loading
-- model/sample-rate policy
-- sounddevice and PortAudio host-API policy
-- device probing, scoring, and auto-selection candidate policy
-- live runtime configuration and smooth user handoffs
-- best-effort user-attention cues for important live-run events
-- the callback itself
-- long-form architectural rationale
-
-The goal is cohesive modules and direct code, not maximal modularity. Avoid collapsing everything back into one large file, but also avoid over-correcting into helper-per-concept sprawl.
+The split keeps the main policy boundaries obvious: entry points, CLI parsing, dependency loading, model/sample-rate rules, audio-system policy, runtime orchestration, notifications, shared state, and long-form design notes. Aim for cohesive modules and direct code. Do not collapse everything into one file, and do not over-split simple workflows into helper-per-concept sprawl.
 
 ## File map
 
@@ -28,7 +15,6 @@ mic_bridge.py
 mic_bridge_app/__init__.py
 mic_bridge_app/__main__.py
     Package entry points.
-
 mic_bridge_app/app.py
     Top-level command dispatch, no-argument help behavior,
     explicit-subcommand handoffs for run flags,
@@ -207,7 +193,7 @@ Keep this split:
 
 ### Keep policy centralized
 
-If a rule is platform-specific, device-selection-specific, or model-specific, keep it in the module that owns that policy. Do not scatter one policy across files to make individual functions shorter.
+If a rule is platform-specific, device-selection-specific, or model-specific, keep it in the module that owns that policy. Do not scatter one rule across several files just to make one function shorter.
 
 - sample-rate compatibility: `modeling.py`
 - host-API choice, device tagging, bridge-output identification, channel probing, device scoring, auto-output rules, Linux/JACK block policy: `audio_system.py`
@@ -219,7 +205,7 @@ If a rule is platform-specific, device-selection-specific, or model-specific, ke
 
 ### Prefer direct code over helper sprawl
 
-A small amount of repetition is acceptable when it keeps logic readable. Bad refactors look like: moving one-line operations into separate helpers, introducing utility modules used once, splitting simple workflows into tiny functions that obscure control flow. Good refactors: remove drift-prone duplication, tighten correctness where several places must agree, keep main flows readable top-to-bottom.
+A small amount of repetition is fine when it keeps control flow obvious. Bad refactors move one-line operations into helpers, add utility modules used once, or split simple workflows into tiny wrappers. Good refactors remove drift-prone duplication, tighten correctness where several places must agree, and keep the main flow readable top-to-bottom.
 
 ### Keep executable command argv and display text derived from one source
 
@@ -278,24 +264,16 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 
 ## Guidance for future AI sessions
 
-If you are an AI assistant editing this repo:
+If you are editing this repo:
 
-- do not collapse the code back into one file
-- do not replace straightforward code with many tiny wrappers
-- keep the explicit `run` subcommand explicit; do not silently infer it from bare run flags
-- keep auto mode strict about outputs; do not make no-argument startup begin running implicitly
-- keep Linux virtual mic auto-creation duplicate-aware and temporary, not persistent
-- if the current run created a Linux target, unload it on every exit path and leave pre-existing user-created targets alone
-- keep Ctrl+C and failed-run handoffs concise and traceback-free
-- if numeric IDs go stale, hand off to `list-devices` rather than fuzzy matching
-- keep device selection, host API names, and same-host-API validation tied to one current PortAudio inventory snapshot after any temporary Linux graph mutation
-- if a command is both displayed and executed, keep argv and display text derived from one shared source instead of shell-splitting documentation text
-- if automatic model download leaves the model unloadable, hand off to manual download
-- do not let auto mode silently route the bridge into speakers, headphones, or monitor/source endpoints
-- keep Linux target creation, cleanup, and model download fail-fast and one-shot
-- keep background-run attention cues concise and deduplicated; do not emit a fresh user alert for every callback flag
-- do not print or attempt OS notifications from inside the audio callback
-- keep architecture rules and user docs aligned with the code
-- treat stream topology, sample-rate policy, same-host-API policy, strict auto-output policy, bridge-output identification policy, and queued main-thread live-alert delivery as deliberate design choices unless the task explicitly asks to redesign them
+- keep the current file split
+- keep `run` explicit
+- keep auto-output strict and same-host-API validation snapshot-based
+- keep Linux virtual-mic creation one-shot, temporary, and cleanup-aware
+- if numeric IDs drift, hand off to `list-devices`
+- keep displayed commands and executed argv derived from the same source
+- keep model download one-shot
+- keep live alerts queued out of the callback and emitted on the main thread
+- update docs with behavior changes
 
-If you make behavior changes, update the docs in the same patch.
+Treat stream topology, sample-rate policy, same-host-API enforcement, strict auto-output selection, bridge-output identification, and queued live-alert delivery as deliberate design choices unless the task explicitly redesigns them.

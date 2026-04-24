@@ -1,6 +1,6 @@
 # Mic bridge
 
-A command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire setups. This tool turns a physical microphone into a cleaned virtual microphone by running DPDFNet in real time and writing enhanced audio into a virtual audio endpoint.
+Command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire. It reads a physical microphone, enhances it in real time, and writes the result into a virtual audio endpoint.
 
 Typical signal flows:
 
@@ -20,7 +20,7 @@ chat/game/OBS app -> that virtual mic target, or its matching monitor/source dep
 
 ## Dependencies
 
-The repo `Pipfile` declares the runtime packages:
+Runtime packages:
 
 - `numpy`
 - `sounddevice`
@@ -32,7 +32,7 @@ Using Pipenv:
 pipenv install
 ```
 
-Or with plain `pip`:
+Or with `pip`:
 
 ```text
 pip install numpy sounddevice dpdfnet
@@ -44,11 +44,11 @@ You can pre-download the recommended model:
 dpdfnet download dpdfnet8_48khz_hr
 ```
 
-If the selected model is missing at startup, the run path tries one automatic download. If that download is interrupted or leaves the model inconsistent, rerun `dpdfnet download <model>` manually and then start the bridge again.
+If the selected model is missing at startup, `run` tries one automatic download. If that still leaves the model unusable, rerun `dpdfnet download <model>` manually and start the bridge again.
 
 ## Quick start on Windows
 
-1. Install VB-CABLE beforehand. This script expects it to already exist, and never installs it for you.
+1. Install VB-CABLE first. This tool never installs it for you.
 2. Set your physical microphone and VB-CABLE to 48 kHz in Windows sound settings.
 3. Install dependencies.
 4. Start the bridge:
@@ -64,9 +64,9 @@ If the selected model is missing at startup, the run path tries one automatic do
    python mic_bridge.py run --input 18 --output 16
    ```
 
-   where `--input` is your real microphone device ID and `--output` is the VB-CABLE playback endpoint, usually `CABLE Input`.
+   `--input` should be your physical microphone, `--output` should usually be the VB-CABLE playback endpoint, `CABLE Input`.
 
-6. In Discord, OBS, or your game, choose the VB-CABLE recording endpoint (usually `CABLE Output`) as the microphone.
+6. In Discord, OBS, or your game, choose the VB-CABLE recording endpoint, usually `CABLE Output`, as the microphone.
 
 ## Quick start on Linux with PipeWire
 
@@ -77,7 +77,7 @@ If the selected model is missing at startup, the run path tries one automatic do
    python mic_bridge.py run
    ```
 
-3. If no likely virtual mic target is visible and `--output` was omitted, the app tries to create a temporary `DPDFNet_Mic` target automatically with `pactl`. If PortAudio can use it, the bridge runs through it and removes it on exit. If PortAudio still cannot use it immediately, the app stops cleanly and removes the temporary target before handing off.
+3. If `--output` is omitted and no likely virtual mic target is visible, `run` may try to create a temporary `DPDFNet_Mic` target with `pactl`. If PortAudio can use it, the bridge runs through it and removes it on exit. If PortAudio still cannot use it, the run stops cleanly and removes the temporary target before handing off.
 
 4. If auto mode still needs help:
 
@@ -86,38 +86,36 @@ If the selected model is missing at startup, the run path tries one automatic do
    python mic_bridge.py run --input 18 --output 16
    ```
 
-   If you want a Linux virtual mic target to keep showing up in `list-devices` between runs, create it manually first.
+   If you want a target that keeps showing up between runs, create it manually first.
 
-5. If you prefer a reusable Linux virtual mic target, create it yourself before running the bridge:
+5. For a reusable Linux virtual mic target, create it yourself before running the bridge:
 
    ```text
    pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
    ```
 
-   This form uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises.
+   This form uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises. Unlike the temporary auto-created target, a manually created one can stay visible between runs until you unload it or your audio session resets.
 
-   A manually created target can keep showing up between runs until you unload it yourself or your audio session resets, unlike the run command's temporary auto-created target.
-
-6. In Discord, OBS, or your app, first try selecting `DPDFNet_Mic` directly as the microphone. If the app does not expose it, try the matching monitor/source instead.
+6. In Discord, OBS, or your app, first try selecting `DPDFNet_Mic` directly as the microphone. If the app does not expose it, try the matching monitor/source.
 
 ## Runtime attention cues
 
 `python mic_bridge.py run` is often left in the background, so important live events try to raise attention promptly instead of waiting for you to notice the terminal later.
 
-What gets surfaced during a run:
+During a run, the app surfaces:
 
 - the first real-time audio glitch reported by PortAudio
 - an escalation if those glitches keep happening
 - an unexpected stop after streaming has already started
 
-How the alert is surfaced:
+Alerts are always printed in the terminal, and may also use:
 
 - a short attention notice in the terminal
 - a terminal bell when attached to a TTY
 - on Linux, a best-effort desktop notification via `notify-send` if available
 - on Windows, a best-effort system beep via `winsound` if available
 
-The detailed next step still stays in the terminal output. The live alerts are intentionally one-shot and concise so the bridge does not spam you for every single callback status flag.
+The detailed next step still stays in the terminal. The live alerts are intentionally brief and deduplicated.
 
 ## Pinned device IDs are intentionally ephemeral
 
@@ -135,7 +133,7 @@ stops working, rerun:
 python mic_bridge.py list-devices
 ```
 
-and pin fresh IDs. The tool intentionally does not try to repair stale IDs by fuzzy-matching device names.
+and pin fresh IDs. The tool intentionally does not fuzzy-match device names.
 
 ## Command overview
 
