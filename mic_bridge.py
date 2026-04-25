@@ -3,8 +3,8 @@
 Thin entry point for the DPDFNet microphone bridge.
 
 The implementation lives in `mic_bridge_app/`.
-Running without arguments shows top-level help.
-Use the explicit `run` subcommand to start the live bridge.
+Running without arguments starts the live bridge.
+Use `--help` for help.
 
 Read `README.md` for usage and `ARCHITECTURE.md` before changing
 behavior.

@@ -2,7 +2,7 @@
 Top-level CLI dispatch.
 
 This file stays small: argv normalization, parser setup, command dispatch, and
-top-level error formatting. Command implementations live in `listing.py` and `runtime.py`.
+concise error formatting. Command implementations live in `listing.py` and `runtime.py`.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from .cli import build_parser
 from .listing import devices_command
 from .runtime import run_command
 
-_COMMAND_NAMES = frozenset({"devices", "list-devices", "run"})
 _HELP_FLAGS = frozenset({"-h", "--help"})
 _DEVICE_COMMAND_HINT_FLAGS = frozenset({"--all-apis", "--hostapi"})
 
@@ -45,12 +44,9 @@ def _normalize_argv(argv: Optional[list[str]]) -> list[str]:
     raw_args = list(sys.argv[1:] if argv is None else argv)
 
     if not raw_args:
-        return ["--help"]
+        return ["run"]
 
     first = raw_args[0]
-    if first == "list-devices":
-        return ["devices", *raw_args[1:]]
-
     if first in {"devices", "run"} or first in _HELP_FLAGS:
         return raw_args
 

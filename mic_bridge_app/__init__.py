@@ -5,8 +5,8 @@ Entry points:
 - `python mic_bridge.py ...`
 - `python -m mic_bridge_app ...`
 
-No subcommand shows top-level help.
-Use `run` to start the live bridge.
+No arguments start the live bridge.
+Use `--help` for help.
 """
 
 from .app import main

@@ -1,159 +1,120 @@
 # Mic bridge
 
-Command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire. It reads a physical microphone, enhances it in real time, and writes the result to a virtual audio endpoint.
+Small command-line DPDFNet microphone bridge for Windows and Linux PipeWire.
+It reads a real microphone, enhances it in real time, and writes the result to
+a virtual microphone target.
 
-Typical signal flows:
-
-Windows:
-
-```text
-physical mic -> this script -> VB-CABLE playback endpoint ("CABLE Input")
-chat/game/OBS app -> VB-CABLE recording endpoint ("CABLE Output")
-```
-
-Linux with PipeWire:
+Typical flow:
 
 ```text
-physical mic -> this script -> PipeWire virtual mic target created via module-null-sink
-chat/game/OBS app -> that virtual mic target, or its matching monitor/source depending on the app stack
+physical mic -> mic_bridge -> virtual mic endpoint -> Discord/OBS/game
 ```
 
-## Dependencies
-
-Runtime packages:
-
-- `numpy`
-- `sounddevice`
-- `dpdfnet`
-
-Using Pipenv:
-
-```text
-pipenv install
-```
-
-Or with `pip`:
+## Install
 
 ```text
 pip install numpy sounddevice dpdfnet
 ```
 
-You can pre-download the recommended model:
+Or with Pipenv:
+
+```text
+pipenv install
+```
+
+Optional pre-download:
 
 ```text
 dpdfnet download dpdfnet8_48khz_hr
 ```
 
-If the selected model is missing at startup, `run` tries one automatic download. If that still leaves the model unusable, rerun `dpdfnet download <model>` manually and start the bridge again.
+If the model is missing, startup tries one automatic download.
 
-## Quick start on Windows
-
-1. Install VB-CABLE first. This tool never installs it for you.
-2. Set your physical microphone and VB-CABLE to 48 kHz in Windows sound settings.
-3. Install dependencies.
-4. Start the bridge:
-
-   ```text
-   python mic_bridge.py run
-   ```
-
-5. If auto mode needs help, fall back to discovery and pin the IDs it shows:
-
-   ```text
-   python mic_bridge.py devices
-   python mic_bridge.py run --input 18 --output 16
-   ```
-
-   `--input` should be your physical microphone, `--output` should usually be the VB-CABLE playback endpoint, `CABLE Input`.
-
-6. In Discord, OBS, or your game, choose the VB-CABLE recording endpoint, usually `CABLE Output`, as the microphone.
-
-## Quick start on Linux with PipeWire
-
-1. Install dependencies.
-2. Start the bridge:
-
-   ```text
-   python mic_bridge.py run
-   ```
-
-3. If `--output` is omitted and no likely virtual mic target is visible, `run` may try to create a temporary `DPDFNet_Mic` target with `pactl`. If PortAudio can use it, the bridge runs through it and removes it on exit. If PortAudio still cannot use it, the run stops cleanly and removes the temporary target before handing off.
-
-4. If auto mode still needs help:
-
-   ```text
-   python mic_bridge.py devices
-   python mic_bridge.py run --input 18 --output 16
-   ```
-
-   If you want a target that keeps showing up between runs, create it manually first.
-
-5. For a reusable Linux virtual mic target, create it yourself before running the bridge:
-
-   ```text
-   pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
-   ```
-
-   This form uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises. Unlike the temporary auto-created target, a manually created one can stay visible between runs until you unload it or your audio session resets.
-
-6. In Discord, OBS, or your app, first try selecting `DPDFNet_Mic` directly as the microphone. If the app does not expose it, try the matching monitor/source.
-
-## Runtime attention cues
-
-`python mic_bridge.py run` is often left in the background, so important live events raise a short attention cue.
-
-During a run, the app surfaces:
-
-- the first real-time audio glitch reported by PortAudio
-- one escalation if glitches keep happening
-- an unexpected stop after streaming has already started
-
-Alerts are always printed in the terminal. They may also use:
-
-- a terminal bell when attached to a TTY
-- Linux desktop notification via `notify-send`
-- Windows system beep via `winsound`
-
-## Pinned device IDs are intentionally ephemeral
-
-`devices` shows the current PortAudio device IDs. Those numeric IDs can change after reboots, hotplug events, backend changes, or audio-session churn.
-
-If a previously working command such as:
+## Start
 
 ```text
-python mic_bridge.py run --input 18 --output 16
+python mic_bridge.py
 ```
 
-stops working, rerun:
+Stop with Ctrl+C.
+
+If auto-selection needs help:
 
 ```text
 python mic_bridge.py devices
+python mic_bridge.py --input 15 --output 19
 ```
 
-and pin fresh IDs. The tool intentionally does not fuzzy-match device names.
+`devices` prints device names first and IDs next to them. IDs can change after
+reboots, hotplug events, backend changes, or audio-session churn; rerun
+`devices` when a pinned command stops working.
 
-## Command overview
+## Windows
+
+Install VB-CABLE yourself first. This tool does not install it.
+
+Use:
 
 ```text
-python mic_bridge.py                       # shows top-level help
-python mic_bridge.py run                   # live bridge with auto-selection
-python mic_bridge.py devices               # discovery and pinning workflow
-python mic_bridge.py run --input 18 --output 16
-python mic_bridge.py --input 18 --output 16  # run is implied for run flags
+python mic_bridge.py
 ```
 
-For clarity, examples keep the explicit `run` subcommand. For convenience, run flags may also be used at the top level.
+In apps, choose VB-CABLE's recording endpoint, usually `CABLE Output`, as the
+microphone. The bridge writes to the playback endpoint, usually `CABLE Input`.
 
-Device-listing flags such as `--all-apis` imply `devices` when no command is supplied:
+If automatic selection fails:
 
 ```text
-python mic_bridge.py --all-apis
+python mic_bridge.py devices
+python mic_bridge.py --input <mic-id> --output <cable-input-id>
 ```
 
-Version 0 uses each model's native sample rate directly. There is no live resampling and no sample-rate override flag.
+## Linux PipeWire
 
-You can also use the package entry point directly:
+Use:
 
 ```text
-python -m mic_bridge_app run
+python mic_bridge.py
 ```
+
+If no usable bridge output exists, the bridge tries to create a temporary
+`DPDFNet_Mic` target, waits briefly for PortAudio/JACK/PipeWire to expose it,
+uses it, and removes it on exit.
+
+In apps, first select `DPDFNet_Mic` as the microphone. If the app does not show
+it, try its matching monitor/source.
+
+For a reusable target instead of the temporary one:
+
+```text
+pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
+```
+
+If automatic selection fails:
+
+```text
+python mic_bridge.py devices
+python mic_bridge.py --input <mic-id> --output <dpdfnet-mic-id>
+```
+
+## Runtime attention cues
+
+Important live events print a short terminal notice. The bridge may also use a
+terminal bell, Linux `notify-send`, or Windows `winsound` when available.
+
+The callback itself never prints or launches notifications; alerts are queued
+and emitted from the main thread.
+
+## Commands
+
+```text
+python mic_bridge.py                         # start bridge
+python mic_bridge.py run                     # same as above
+python mic_bridge.py devices                 # list current devices
+python mic_bridge.py --input 15 --output 19  # pin IDs
+python mic_bridge.py devices --all-apis
+python -m mic_bridge_app
+```
+
+Version 0 uses the selected model's native sample rate. There is no live
+resampling and no sample-rate override flag.

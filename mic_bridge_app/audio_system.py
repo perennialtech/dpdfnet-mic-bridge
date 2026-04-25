@@ -7,9 +7,12 @@ auto-selection rules, and Linux/JACK block-size behavior.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import math
+import os
 import platform
 import shlex
+import sys
 from typing import Iterable
 
 from .constants import (
@@ -25,6 +28,35 @@ from .constants import (
 )
 from .dependencies import require_sounddevice
 from .domain import AudioInventory, DeviceProbe
+
+
+@contextmanager
+def _silence_native_stderr():
+    """
+    Hide noisy native diagnostics during probe calls.
+
+    ALSA/PortAudio can write directly to fd 2 while `check_*_settings()` tries
+    devices that are expected to fail. The Python exception is still captured
+    and shown by `devices --verbose`; the raw native spam is not useful in the
+    normal UI.
+    """
+    try:
+        stderr_fd = sys.stderr.fileno()
+        saved_fd = os.dup(stderr_fd)
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, stderr_fd)
+    except (AttributeError, OSError, ValueError):
+        yield
+        return
+
+    try:
+        yield
+    finally:
+        try:
+            os.dup2(saved_fd, stderr_fd)
+        finally:
+            os.close(saved_fd)
+            os.close(devnull_fd)
 
 
 def format_samplerate(value: float) -> str:
@@ -185,6 +217,16 @@ def infer_device_tags(name: str) -> tuple[str, ...]:
     add("loopback" in text, "virtual")
     add("dpdfnet" in text, "dpdfnet")
     add("microphone" in text or " mic" in text or text.startswith("mic "), "mic")
+    add("speech-dispatcher" in text or "dummy" in text, "dummy")
+    add(
+        "hdmi" in text or "displayport" in text or "digital stereo (hdmi)" in text,
+        "hdmi",
+    )
+    add(
+        "audio codec" in text or "analog stereo" in text or "usb" in text,
+        "audio-interface",
+    )
+    add("airpods" in text or "bluetooth" in text, "bluetooth")
     add("headphone" in text or "headset" in text, "headphones")
     add("speaker" in text, "speakers")
 
@@ -247,12 +289,13 @@ def probe_device_channels(
     failures: list[str] = []
     for channels in channel_candidates:
         try:
-            check(
-                device=device_id,
-                channels=channels,
-                samplerate=samplerate,
-                dtype=dtype,
-            )
+            with _silence_native_stderr():
+                check(
+                    device=device_id,
+                    channels=channels,
+                    samplerate=samplerate,
+                    dtype=dtype,
+                )
             return channels, tuple()
         except Exception as exc:
             failures.append(f"{channels}ch -> {exc}")
@@ -403,6 +446,14 @@ def _score_input_probe(probe: DeviceProbe) -> int:
 
     if "mic" in tags:
         score += 40
+    if "audio-interface" in tags:
+        score += 20
+    if "dummy" in tags:
+        score -= 200
+    if "hdmi" in tags:
+        score -= 90
+    if "headphones" in tags or "speakers" in tags or "bluetooth" in tags:
+        score -= 25
     if "monitor" in tags:
         score -= 50
     if "dpdfnet" in tags:
@@ -439,8 +490,10 @@ def _score_output_probe(probe: DeviceProbe) -> int:
         score -= 80
     if "monitor" in tags:
         score -= 80
+    if "dummy" in tags:
+        score -= 120
     if "headphones" in tags or "speakers" in tags:
-        score += 10
+        score -= 10
     if (
         "virtual" in tags
         and "vb-cable-playback" not in tags
@@ -537,6 +590,8 @@ def is_viable_auto_input_candidate(probe: DeviceProbe) -> bool:
         and probe.open_channels is not None
         and "virtual" not in tags
         and "monitor" not in tags
+        and "dummy" not in tags
+        and "hdmi" not in tags
         and "dpdfnet" not in tags
         and "vb-cable-recording" not in tags
         and "vb-cable-playback" not in tags
@@ -628,7 +683,7 @@ def build_run_command_suggestion(
     output_id: int,
     model_name: str,
 ) -> str:
-    parts = ["python", "mic_bridge.py", "run"]
+    parts = ["python", "mic_bridge.py"]
 
     if model_name != DEFAULT_MODEL:
         parts.extend(["--model", model_name])

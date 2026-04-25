@@ -23,6 +23,8 @@ DEFAULT_LATENCY = "high"
 
 LINUX_VIRTUAL_MIC_SINK_NAME = "dpdfnet_mic"
 LINUX_VIRTUAL_MIC_DESCRIPTION = "DPDFNet_Mic"
+LINUX_VIRTUAL_MIC_DISCOVERY_TIMEOUT_SECONDS = 5.0
+LINUX_VIRTUAL_MIC_DISCOVERY_POLL_SECONDS = 0.35
 
 # On Linux/JACK, Python + PortAudio tends to behave more reliably when given a
 # somewhat roomier exact block size instead of raw 10.0 ms.

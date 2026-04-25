@@ -16,10 +16,10 @@ mic_bridge_app/__init__.py
 mic_bridge_app/__main__.py
     Package entry points.
 mic_bridge_app/app.py
-    Top-level command dispatch, no-argument help behavior,
+    Top-level command dispatch, no-argument run behavior,
     top-level run-flag normalization,
-    short-command alias normalization,
-    and top-level error formatting.
+    device-listing flag normalization,
+    and concise top-level error formatting.
 
 mic_bridge_app/cli.py
     argparse parser creation only.
@@ -59,9 +59,11 @@ mic_bridge_app/audio_system.py
     - channel negotiation
     - device probing
     - scoring and run-pair suggestion
+    - quiet native probe handling so ALSA/PortAudio diagnostics do not drown
+      the user-facing handoff
     - auto-selection candidate policy
     - block-size policy, including Linux/JACK defaults
-    - Linux virtual mic helper command
+    - Linux virtual mic helper command argv/display text
 
 mic_bridge_app/listing.py
     The devices command, used as the fallback discovery and pinning workflow.
@@ -161,6 +163,8 @@ When `--output` is omitted on Linux and no likely bridge-style output is visible
 
 The recommended `pactl` command is still the manual fallback for users who want a reusable target between runs. It uses `media.class=Audio/Source/Virtual` for better app discoverability and `channels=1 channel_map=mono` to avoid channel-mapping surprises.
 
+After creating the temporary target, runtime waits briefly and rescans. PipeWire, JACK bridges, and PortAudio can expose the new node asynchronously; failing immediately is bad UX.
+
 ### Model auto-download is one-shot
 
 If `StreamEnhancer` fails in a way that looks like a missing model, `run` attempts one `dpdfnet download <model>` and tries again. No retry loop. If loading still fails, stop with a clear error directing to manual download.
@@ -189,6 +193,15 @@ Keep this split:
 - do not spam on every individual underflow/overflow flag
 - first glitch + one escalation is intentional; detailed counts still belong in the shutdown summary
 - notification failures are best-effort only and must never replace the terminal handoff
+
+## UI/UX rules
+
+- `python mic_bridge.py` starts the bridge. `--help` shows help.
+- `devices` output is name-first and compact. Device names are what users scan
+  for; numeric IDs are secondary.
+- Prefer short handoffs with one next command over long platform lectures.
+- Suppress native probe noise where possible. Probe failures should appear as
+  structured lines only when the user asks for `devices --verbose`.
 
 ## Code style guardrails
 
@@ -220,18 +233,18 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 
 ### `run`
 
-`run` may be explicit, or implied when the first top-level argument is a run flag. No arguments still show top-level help.
+`run` may be explicit, implied when the first top-level argument is a run flag, or implied by no arguments.
 
 1. resolve the selected model's native sample rate
 2. resolve explicit or auto-selected devices
-3. on Linux, optionally try to create the temporary virtual mic target if output auto-selection needs it (duplicate-aware)
-4. validate same-host-API and device/channel assumptions against the same current PortAudio inventory snapshot used for selection
+3. on Linux, optionally create the temporary virtual mic target if output auto-selection needs it, wait briefly for it to appear, then rescan
+4. validate same-host-API and device/channel assumptions against the current PortAudio inventory snapshot used for selection
 5. resolve effective block size and negotiated channel counts
-6. print a summary so the user can spot mistakes before audio starts
+6. print a compact summary so the user can spot mistakes before audio starts
 7. load `StreamEnhancer`, optionally doing one automatic model download
 8. open one duplex stream, poll queued live alerts, and run the callback
 9. unload any temporary Linux virtual mic target created by this run
-10. print callback underflow/overflow summary on shutdown
+10. print a one-line callback warning summary on shutdown
 
 ### `devices`
 
@@ -270,7 +283,7 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 If you are editing this repo:
 
 - keep the current file split
-- keep `run` explicit
+- keep no-argument startup simple and obvious
 - keep auto-output strict and same-host-API validation snapshot-based
 - keep Linux virtual-mic creation one-shot, temporary, and cleanup-aware
 - if numeric IDs drift, hand off to `devices`

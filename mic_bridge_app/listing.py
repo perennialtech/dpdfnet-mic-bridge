@@ -14,22 +14,17 @@ import sys
 from .audio_system import (
     build_device_probes,
     build_run_command_suggestion,
-    format_jack_block_ms_hints,
-    format_samplerate,
-    format_tags,
-    jack_block_ms_for_frames,
+    hostapi_filter_key_for_name,
+    is_likely_virtual_bridge_output,
     linux_virtual_mic_command,
     query_audio_inventory,
-    recommended_linux_jack_block_frames,
     resolve_list_hostapi_filter,
     suggest_run_pair,
 )
 from .constants import (
     DEFAULT_MODEL,
     HOSTAPI_FILTER_DISPLAY_NAMES,
-    LINUX_VIRTUAL_MIC_DESCRIPTION,
 )
-
 from .domain import DeviceProbe
 from .modeling import model_native_sample_rate
 
@@ -41,6 +36,46 @@ def _eprint(*args: object) -> None:
 def _print_lines(lines: list[str]) -> None:
     for line in lines:
         print(line)
+
+
+def _short_hostapi_name(hostapi_name: str) -> str:
+    key = hostapi_filter_key_for_name(hostapi_name)
+    if key is None:
+        return hostapi_name
+    return {
+        "pipewire": "PipeWire",
+        "pulse": "Pulse",
+        "jack": "JACK",
+        "alsa": "ALSA",
+        "wasapi": "WASAPI",
+        "mme": "MME",
+        "directsound": "DirectSound",
+        "wdm-ks": "WDM-KS",
+    }.get(key, hostapi_name)
+
+
+def _probe_badges(probe: DeviceProbe) -> str:
+    tags = set(probe.tags)
+    badges: list[str] = []
+
+    if is_likely_virtual_bridge_output(probe):
+        badges.append("bridge")
+    elif "dpdfnet" in tags:
+        badges.append("dpdfnet")
+    if "mic" in tags:
+        badges.append("mic")
+    if "audio-interface" in tags:
+        badges.append("interface")
+    if "dummy" in tags:
+        badges.append("dummy")
+    if "hdmi" in tags:
+        badges.append("hdmi")
+    if "monitor" in tags:
+        badges.append("monitor")
+    if "headphones" in tags:
+        badges.append("headphones")
+
+    return ", ".join(dict.fromkeys(badges))
 
 
 def _print_probe_section(
@@ -57,74 +92,58 @@ def _print_probe_section(
         return
 
     for probe in probes:
-        max_label = "max_in" if probe.direction == "input" else "max_out"
-        open_label = "no" if probe.open_channels is None else f"{probe.open_channels}ch"
-        print(
-            f"  [{probe.device_id:>3}] "
-            f"open@{samplerate}={open_label:<3}  "
-            f"{max_label}={probe.max_channels:<2}  "
-            f"default={format_samplerate(probe.default_samplerate):<6}  "
-            f"{probe.hostapi_name}  "
-            f"{probe.name}  "
-            f"({format_tags(probe.tags)})"
+        del samplerate
+        open_label = (
+            "closed" if probe.open_channels is None else f"{probe.open_channels}ch"
         )
+        details = [
+            f"id {probe.device_id}",
+            open_label,
+            _short_hostapi_name(probe.hostapi_name),
+        ]
+        badges = _probe_badges(probe)
+        if badges:
+            details.append(badges)
+
+        print(f"  {probe.name}  ({', '.join(details)})")
         if verbose and probe.open_channels is None and probe.probe_failures:
             for failure in probe.probe_failures:
-                print(f"        {failure}")
+                print(f"      {failure}")
 
 
-def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None:
+def _print_next_steps(
+    *,
+    model_name: str,
+    suggested_pair: tuple[DeviceProbe, DeviceProbe] | None,
+    output_probes: list[DeviceProbe],
+) -> None:
     system = platform.system()
 
-    if system == "Windows":
-        _print_lines(
-            [
-                "Windows notes:",
-                "  - Start with: python mic_bridge.py run",
-                f"  - open@{samplerate} shows whether PortAudio can open the device.",
-                "  - Apps should use VB-CABLE 'CABLE Output' as the microphone.",
-                "  - If IDs drift, rerun: python mic_bridge.py devices",
-            ]
-        )
-        print()
-        return
-
-    if system == "Linux":
-        lines = [
-            "Linux notes:",
-            "  - Start with: python mic_bridge.py run",
-            "  - Keep input and output on the same host API.",
-            "  - Auto output only picks virtual mic targets, never speakers/headphones or monitor/source endpoints.",
-            f"  - run may create a temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target and remove it on exit.",
-            "  - For a reusable target, create it yourself with:",
-            f"      {linux_virtual_mic_command()}",
-            f"  - open@{samplerate} shows whether PortAudio can open the device.",
-            f"  - In apps, try '{LINUX_VIRTUAL_MIC_DESCRIPTION}' first, then its monitor/source if needed.",
-        ]
-        if hostapi_filter == "jack":
-            auto_frames = recommended_linux_jack_block_frames(samplerate)
-            auto_ms = jack_block_ms_for_frames(auto_frames, samplerate)
-            lines.extend(
-                [
-                    "  - JACK note: omitting --block-ms uses an exact JACK-friendly block size.",
-                    f"    Default: {auto_ms:.3f} ms ({auto_frames} frames) at {samplerate} Hz.",
-                    f"    If you override it and hear glitches, try {format_jack_block_ms_hints(samplerate)} ms.",
-                ]
+    if suggested_pair is not None:
+        input_probe, output_probe = suggested_pair
+        print("Use:")
+        print(
+            "  "
+            + build_run_command_suggestion(
+                input_id=input_probe.device_id,
+                output_id=output_probe.device_id,
+                model_name=model_name,
             )
-        lines.append("  - If IDs drift, rerun: python mic_bridge.py devices")
-        _print_lines(lines)
-        print()
-        return
+        )
+    else:
+        print("Use:")
+        print("  python mic_bridge.py --input <id> --output <id>")
 
-    _print_lines(
-        [
-            "Platform notes:",
-            "  - Try: python mic_bridge.py run",
-            f"  - Probe results show whether a device opens at {samplerate} Hz.",
-            "  - If pinned IDs stop working after device churn, rerun devices.",
-        ]
-    )
+    if system == "Linux" and not any(
+        is_likely_virtual_bridge_output(probe) for probe in output_probes
+    ):
+        print()
+        print("No bridge output is visible. Startup will try to create DPDFNet_Mic.")
+        print("Permanent target:")
+        print(f"  {linux_virtual_mic_command()}")
+
     print()
+    print("If a pinned ID stops working, run `python mic_bridge.py devices` again.")
 
 
 def devices_command(args: argparse.Namespace) -> int:
@@ -149,17 +168,16 @@ def devices_command(args: argparse.Namespace) -> int:
     )
 
     fast_path_command = (
-        "python mic_bridge.py run"
+        "python mic_bridge.py"
         if args.model == DEFAULT_MODEL
-        else f"python mic_bridge.py run --model {args.model}"
+        else f"python mic_bridge.py --model {args.model}"
     )
 
-    print()
-    print(f"Devices for {args.model} @ {probe_sample_rate} Hz")
-    print(f"Auto run : {fast_path_command}")
-    print(f"Host API : {HOSTAPI_FILTER_DISPLAY_NAMES[hostapi_filter]}")
+    print(f"Devices ({args.model}, {probe_sample_rate} Hz)")
+    print(f"Showing: {HOSTAPI_FILTER_DISPLAY_NAMES[hostapi_filter]}")
+    print(f"Start  : {fast_path_command}")
     if hostapi_filter != "all":
-        print("Tip      : use --all-apis to show every PortAudio device.")
+        print("More   : python mic_bridge.py devices --all-apis")
     print()
 
     _print_probe_section(
@@ -179,7 +197,7 @@ def devices_command(args: argparse.Namespace) -> int:
 
     if hostapi_filter != "all" and not input_probes and not output_probes:
         print(
-            f"No devices matched the current host API filter '{hostapi_filter}'. Try --all-apis."
+            f"No devices matched '{hostapi_filter}'. Try: python mic_bridge.py devices --all-apis"
         )
         print()
 
@@ -187,37 +205,20 @@ def devices_command(args: argparse.Namespace) -> int:
         print("No PortAudio devices are currently visible.")
         if platform.system() == "Windows":
             print(
-                "Check Windows sound settings and confirm your audio devices, including VB-CABLE if you plan to use it, are installed beforehand."
+                "Check Windows sound settings and confirm VB-CABLE is installed if you need it."
             )
         elif platform.system() == "Linux":
             print(
-                "Check that your audio session is running and that PortAudio can see the expected PipeWire, PulseAudio, JACK, or ALSA backend."
+                "Check that your audio session is running and PortAudio can see PipeWire/Pulse/JACK/ALSA."
             )
         print()
 
     suggested_pair = suggest_run_pair(input_probes, output_probes)
-    if suggested_pair is not None:
-        input_probe, output_probe = suggested_pair
-        print("Suggested run:")
-        print(
-            "  "
-            + build_run_command_suggestion(
-                input_id=input_probe.device_id,
-                output_id=output_probe.device_id,
-                model_name=args.model,
-            )
-        )
-        if platform.system() == "Linux" and hostapi_filter == "jack":
-            auto_frames = recommended_linux_jack_block_frames(probe_sample_rate)
-            auto_ms = jack_block_ms_for_frames(auto_frames, probe_sample_rate)
-            print(
-                f"  (On Linux/JACK, omitting --block-ms auto-selects {auto_ms:.3f} ms / {auto_frames} frames.)"
-            )
-        print()
 
-    _print_platform_usage_notes(
-        samplerate=probe_sample_rate,
-        hostapi_filter=hostapi_filter,
+    _print_next_steps(
+        model_name=args.model,
+        suggested_pair=suggested_pair,
+        output_probes=output_probes,
     )
 
     return 0

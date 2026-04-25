@@ -21,19 +21,18 @@ from .constants import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "DPDFNet microphone bridge.\n\n"
-            "Common:\n"
-            "  python mic_bridge.py run\n"
+            "DPDFNet microphone bridge.\n"
+            "\n"
+            "Examples:\n"
+            "  python mic_bridge.py\n"
             "  python mic_bridge.py devices\n"
-            "  python mic_bridge.py run --input 18 --output 16\n\n"
-            "No arguments show this help. Run flags may also be used without the\n"
-            "explicit 'run' command. Device-listing flags imply 'devices'."
+            "  python mic_bridge.py --input 15 --output 19"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=(
-            "Linux reusable virtual mic target:\n"
+            "Linux reusable target:\n"
             f"  {linux_virtual_mic_command()}\n\n"
-            "Version 0 has no live resampling and no sample-rate override."
+            "No live resampling; the model chooses the sample rate."
         ),
     )
 
@@ -48,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="inspect devices and pin numeric IDs",
         formatter_class=argparse.RawTextHelpFormatter,
         description=(
-            "Inspect PortAudio devices at the model's native sample rate.\n"
+            "List usable PortAudio devices at the model's native sample rate.\n"
             "Defaults: WASAPI on Windows; PipeWire/PulseAudio/JACK/ALSA preference on Linux."
         ),
     )
@@ -82,10 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         help="run the live bridge",
         formatter_class=argparse.RawTextHelpFormatter,
-        description=(
-            "Run the live mic -> DPDFNet -> output bridge.\n"
-            "Omitted devices are auto-selected only when safe."
-        ),
+        description="Run the live mic -> DPDFNet -> virtual mic bridge.",
     )
     run_parser.add_argument(
         "--input",
@@ -99,8 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=False,
         help=(
             "numeric output device ID\n"
-            "Windows: usually VB-CABLE 'CABLE Input'.\n"
-            "Linux: may auto-create a temporary DPDFNet_Mic target."
+            "Windows: usually VB-CABLE 'CABLE Input'; Linux: usually DPDFNet_Mic."
         ),
     )
     run_parser.add_argument(
