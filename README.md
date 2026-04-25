@@ -1,8 +1,6 @@
 # Mic bridge
 
-Small command-line DPDFNet microphone bridge for Windows and Linux PipeWire.
-It reads a real microphone, enhances it in real time, and writes the result to
-a virtual microphone target.
+Small command-line DPDFNet microphone bridge for Windows and Linux PipeWire. It reads a real microphone, enhances it in real time, and writes the result to a virtual microphone target.
 
 Typical flow:
 
@@ -45,9 +43,7 @@ python mic_bridge.py devices
 python mic_bridge.py --input 15 --output 19
 ```
 
-`devices` prints device names first and IDs next to them. IDs can change after
-reboots, hotplug events, backend changes, or audio-session churn; rerun
-`devices` when a pinned command stops working.
+`devices` prints device names first and IDs next to them. IDs can change after reboots, hotplug events, backend changes, or audio-session churn; rerun `devices` when a pinned command stops working.
 
 ## Windows
 
@@ -59,8 +55,7 @@ Use:
 python mic_bridge.py
 ```
 
-In apps, choose VB-CABLE's recording endpoint, usually `CABLE Output`, as the
-microphone. The bridge writes to the playback endpoint, usually `CABLE Input`.
+In apps, choose VB-CABLE's recording endpoint, usually `CABLE Output`, as the microphone. The bridge writes to the playback endpoint, usually `CABLE Input`.
 
 If automatic selection fails:
 
@@ -77,12 +72,9 @@ Use:
 python mic_bridge.py
 ```
 
-If no usable bridge output exists, the bridge tries to create a temporary
-`DPDFNet_Mic` target, waits briefly for PortAudio/JACK/PipeWire to expose it,
-uses it, and removes it on exit.
+If no usable bridge output exists, the bridge tries to create a temporary `DPDFNet_Mic` target, waits briefly for PortAudio/JACK/PipeWire to expose it, uses it, and removes it on exit.
 
-In apps, first select `DPDFNet_Mic` as the microphone. If the app does not show
-it, try its matching monitor/source.
+In apps, first select `DPDFNet_Mic` as the microphone. If the app does not show it, try its matching monitor/source.
 
 For a reusable target instead of the temporary one:
 
@@ -99,11 +91,9 @@ python mic_bridge.py --input <mic-id> --output <dpdfnet-mic-id>
 
 ## Runtime attention cues
 
-Important live events print a short terminal notice. The bridge may also use a
-terminal bell, Linux `notify-send`, or Windows `winsound` when available.
+Important live events print a short terminal notice. The bridge may also use a terminal bell, Linux `notify-send`, or Windows `winsound` when available.
 
-The callback itself never prints or launches notifications; alerts are queued
-and emitted from the main thread.
+The callback itself never prints or launches notifications; alerts are queued and emitted from the main thread.
 
 ## Commands
 
@@ -116,5 +106,4 @@ python mic_bridge.py devices --all-apis
 python -m mic_bridge_app
 ```
 
-Version 0 uses the selected model's native sample rate. There is no live
-resampling and no sample-rate override flag.
+Version 0 uses the selected model's native sample rate. There is no live resampling and no sample-rate override flag.
