@@ -89,7 +89,7 @@ def _scan_all_device_probes(sample_rate: int) -> ProbeSnapshot:
 
 
 def _list_devices_handoff(next_step: str) -> str:
-    return f"Run:\n  python mic_bridge.py list-devices\n{next_step}"
+    return f"Run:\n  python mic_bridge.py devices\n{next_step}"
 
 
 def _get_current_run_device_info(
@@ -479,7 +479,7 @@ def _download_dpdfnet_model_once(model_name: str) -> None:
         else [sys.executable, "-m", "dpdfnet", "download", model_name]
     )
 
-    print(f"Model '{model_name}' is missing, downloading it once...")
+    print(f"Model '{model_name}' is missing; downloading once...")
 
     try:
         completed = subprocess.run(command, check=False)
@@ -501,7 +501,7 @@ def _download_dpdfnet_model_once(model_name: str) -> None:
             f"  {display_command}"
         )
 
-    print("Download finished, loading the model...")
+    print("Download finished.")
 
 
 def _build_stream_enhancer(dpdfnet_mod, *, model_name: str, verbose: bool):
@@ -584,9 +584,7 @@ def _resolve_run_device_selection(
         if visible_bridge_output_exists():
             return
 
-        print(
-            f"No likely virtual mic target is visible, trying to create temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}'..."
-        )
+        print(f"Creating temporary Linux target '{LINUX_VIRTUAL_MIC_DESCRIPTION}'...")
         status, detail = _try_create_linux_virtual_mic_target(linux_virtual_mic_lease)
         if status == "failed":
             virtual_mic_note = f"Automatic Linux target creation failed for '{LINUX_VIRTUAL_MIC_DESCRIPTION}': {detail or 'unknown `pactl` error.'}"
@@ -875,123 +873,97 @@ def _print_run_summary(config: RunConfig) -> None:
         block_line = f"{config.block_size} frames ({config.block_ms:.3f} ms default)"
 
     print()
-    print("Run configuration")
-    print("-----------------")
-    print(f"Model                : {config.model_name}")
-    print(f"Model/native SR      : {config.sample_rate} Hz")
-    print(f"Block size           : {block_line}")
-    print(f"Latency hint         : {config.latency}")
+    print("Mic bridge")
+    print("----------")
+    print(f"model  : {config.model_name} ({config.sample_rate} Hz)")
+    print(f"block  : {block_line}; latency={config.latency}")
     print(
-        f"Input device         : [{config.input_device_id}] {config.input_device_name}"
+        "input  : "
+        f"[{config.input_device_id}] {config.input_device_name} "
+        f"({config.input_hostapi_name}, {config.input_channels} ch, "
+        f"{'auto' if config.input_was_auto_selected else 'manual'})"
     )
-    print(f"Input host API       : {config.input_hostapi_name}")
-    print(f"Input channels open  : {config.input_channels}")
     print(
-        f"Output device        : [{config.output_device_id}] {config.output_device_name}"
+        "output : "
+        f"[{config.output_device_id}] {config.output_device_name} "
+        f"({config.output_hostapi_name}, {config.output_channels} ch, "
+        f"{'auto' if config.output_was_auto_selected else 'manual'})"
     )
-    print(f"Output host API      : {config.output_hostapi_name}")
-    print(f"Output channels open : {config.output_channels}")
-    print()
-    print("Notes:")
 
     notes: list[str] = []
 
-    if config.input_was_auto_selected and config.output_was_auto_selected:
-        notes.append("Input and output were auto-selected.")
-    elif config.input_was_auto_selected:
-        notes.append("Input was auto-selected.")
-    elif config.output_was_auto_selected:
-        notes.append("Output was auto-selected.")
-
     if config.linux_virtual_mic_was_auto_created:
         notes.append(
-            f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' was created for this run and will be removed on exit."
-        )
-        notes.append(
-            "Its numeric output ID is temporary. Create the target manually if you want a reusable one."
+            f"temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' will be removed on exit"
         )
 
-    notes.append("First enhanced audio arrives after about one model window (~20 ms).")
     if config.input_channels > 1:
-        notes.append("Input is downmixed to mono before enhancement.")
+        notes.append("input is downmixed to mono")
     if config.output_channels > 1:
-        notes.append("Enhanced mono is duplicated across all opened output channels.")
-    else:
-        notes.append("Enhanced mono is written to one output channel.")
-    notes.append("Important runtime problems raise a short attention alert.")
+        notes.append("enhanced mono is duplicated to all output channels")
 
     if system == "Windows":
-        notes.append(
-            "If this is VB-CABLE 'CABLE Input', apps should use 'CABLE Output' as the microphone."
-        )
+        notes.append("apps should use VB-CABLE 'CABLE Output' as the microphone")
         if input_hostapi_key != "wasapi":
-            notes.append("WASAPI is the recommended Windows host API starting point.")
+            notes.append("WASAPI is the recommended Windows host API")
 
     elif system == "Linux":
         notes.append(
-            "If this is your virtual mic target, apps should select it first, then its monitor/source if needed."
+            f"apps should try '{LINUX_VIRTUAL_MIC_DESCRIPTION}' first, then its monitor/source"
         )
         if input_hostapi_key not in {"pipewire", "pulse", "jack", "alsa"}:
-            notes.append(
-                "A PipeWire-compatible PortAudio host API is preferred when available."
-            )
+            notes.append("a PipeWire-compatible PortAudio host API is preferred")
 
         if input_hostapi_key == "jack":
             auto_frames = recommended_linux_jack_block_frames(config.sample_rate)
             auto_ms = jack_block_ms_for_frames(auto_frames, config.sample_rate)
             if config.block_policy == "auto-linux-jack":
                 notes.append(
-                    f"Linux/JACK auto-selected {config.block_ms:.3f} ms ({config.block_size} frames)."
+                    f"Linux/JACK auto-selected {config.block_ms:.3f} ms ({config.block_size} frames)"
                 )
             elif not is_power_of_two(config.block_size):
                 notes.append(
-                    "Linux/JACK: this block size is not an exact power-of-two frame count."
+                    "Linux/JACK: block size is not an exact power-of-two frame count"
                 )
                 notes.append(
-                    f"If you hear glitches, try --block-ms {auto_ms:.3f} or another exact value such as {format_jack_block_ms_hints(config.sample_rate)} ms."
+                    f"if you hear glitches, try --block-ms {auto_ms:.3f} or {format_jack_block_ms_hints(config.sample_rate)} ms"
                 )
 
     if (
         config.block_policy == "default-10ms"
         and abs(config.block_ms - DEFAULT_BLOCK_MS) > 1e-6
     ):
-        notes.append(
-            "Block duration is rounded to whole frames, so the effective milliseconds differ slightly."
-        )
+        notes.append("block duration is rounded to whole frames")
 
     if should_print_generic_nonbridge_warning:
         if system == "Windows":
             notes.append(
-                "Warning: output does not look like a bridge target. For VB-CABLE, --output should usually be 'CABLE Input'."
+                "warning: output does not look like a bridge target; VB-CABLE output should usually be 'CABLE Input'"
             )
         elif system == "Linux":
-            notes.append(
-                "Warning: output does not look like a bridge target. For the usual Linux flow, --output should be a virtual mic sink."
-            )
+            notes.append("warning: output does not look like a virtual mic sink")
         else:
-            notes.append(
-                "Warning: output does not look like a bridge target. Enhanced audio will be sent there directly."
-            )
+            notes.append("warning: output does not look like a bridge target")
 
     if "vb-cable-recording" in input_tags or "vb-cable-playback" in input_tags:
         notes.append(
-            "Warning: input looks like a VB-CABLE endpoint, not a physical microphone."
+            "warning: input looks like a VB-CABLE endpoint, not a physical microphone"
         )
     if "vb-cable-recording" in output_tags:
         notes.append(
-            "Warning: output looks like a recording endpoint. For VB-CABLE, you usually want 'CABLE Input'."
+            "warning: output looks like a recording endpoint; VB-CABLE usually needs 'CABLE Input'"
         )
     if "monitor" in input_tags:
-        notes.append(
-            "Warning: input looks like a monitor/source, not a physical microphone."
-        )
+        notes.append("warning: input looks like a monitor/source")
     if system == "Linux" and "monitor" in output_tags:
         notes.append(
-            "Warning: output looks like a monitor/source, not a sink playback device."
+            "warning: output looks like a monitor/source, not a sink playback device"
         )
 
-    for line in notes:
-        print(f"  - {line}")
+    if notes:
+        print("notes  :")
+        for line in notes:
+            print(f"  - {line}")
     print()
 
 
@@ -1020,33 +992,27 @@ def _emit_live_runtime_alert(
     summary = _format_runtime_issue_summary(status_counter)
 
     if alert_key == "first-runtime-issue":
-        lines = [
-            "PortAudio reported a real-time audio problem.",
-        ]
-        if summary is not None:
-            lines.append(f"So far: {summary}.")
-        lines.append(
-            "If this repeats, try a larger --block-ms or a different device pair."
+        body = (
+            f"{summary}. Try a larger --block-ms if it repeats."
+            if summary is not None
+            else "PortAudio reported a real-time audio problem."
         )
         notifier.attention(
             title="Audio glitch detected",
-            body="\n".join(lines),
+            body=body,
             urgency="normal",
         )
         return
 
     if alert_key == "repeated-runtime-issues":
-        lines = [
-            "Real-time audio problems have been reported repeatedly.",
-        ]
-        if summary is not None:
-            lines.append(f"So far: {summary}.")
-        lines.append(
-            "If it keeps happening, stop the run, re-run list-devices, or try a larger --block-ms."
+        body = (
+            f"Repeated PortAudio glitches: {summary}. Try a larger --block-ms or run devices."
+            if summary is not None
+            else "Repeated PortAudio glitches. Try a larger --block-ms or run devices."
         )
         notifier.attention(
             title="Audio glitches are continuing",
-            body="\n".join(lines),
+            body=body,
             urgency="normal",
         )
         return
@@ -1108,7 +1074,7 @@ def _notify_unexpected_stream_stop(
 
     notifier.attention(
         title="Bridge stopped unexpectedly",
-        body=f"{summary}\nSee the terminal for the next step.",
+        body=f"{summary} See the terminal for the next step.",
         urgency="critical",
     )
 
@@ -1139,7 +1105,7 @@ def _run_command_impl(
     )
     _print_run_summary(config)
 
-    print("Preparing DPDFNet model...")
+    print("Loading DPDFNet model...")
     model_start = time.perf_counter()
     enhancer = _build_stream_enhancer(
         dpdfnet_mod,
@@ -1147,7 +1113,7 @@ def _run_command_impl(
         verbose=bool(args.verbose),
     )
     model_elapsed = time.perf_counter() - model_start
-    print(f"Model ready in {model_elapsed:.2f} s.")
+    print(f"Model ready ({model_elapsed:.2f} s).")
 
     output_fifo = AudioFifo()
     status_counter = CallbackStatusCounter()
@@ -1193,7 +1159,7 @@ def _run_command_impl(
             outdata.fill(0.0)
             raise sd_mod.CallbackAbort from exc
 
-    print("Opening duplex audio stream...")
+    print("Opening audio stream...")
 
     stream_error: Exception | None = None
     interrupted = False
@@ -1209,8 +1175,7 @@ def _run_command_impl(
             callback=audio_callback,
         ):
             streaming_started = True
-            print("Streaming.")
-            print("Press Ctrl+C to stop.")
+            print("Streaming. Press Ctrl+C to stop.")
             print()
 
             while True:
@@ -1234,7 +1199,7 @@ def _run_command_impl(
 
     if interrupted:
         print()
-        print("Stopping bridge...")
+        print("Stopping...")
     elif stream_error is not None:
         if fatal_callback_error:
             _notify_unexpected_stream_stop(
@@ -1270,13 +1235,13 @@ def _run_command_impl(
     nonzero_status_lines = status_counter.nonzero_lines()
     if nonzero_status_lines:
         print()
-        print("Callback status summary:")
+        print("Callback status:")
         for line in nonzero_status_lines:
             print(line)
         print()
     else:
         print()
-        print("No callback underflow/overflow flags were observed.")
+        print("No callback underflow/overflow flags observed.")
         print()
 
     return 0

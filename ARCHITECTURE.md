@@ -17,7 +17,8 @@ mic_bridge_app/__main__.py
     Package entry points.
 mic_bridge_app/app.py
     Top-level command dispatch, no-argument help behavior,
-    explicit-subcommand handoffs for run flags,
+    top-level run-flag normalization,
+    short-command alias normalization,
     and top-level error formatting.
 
 mic_bridge_app/cli.py
@@ -63,7 +64,7 @@ mic_bridge_app/audio_system.py
     - Linux virtual mic helper command
 
 mic_bridge_app/listing.py
-    The list-devices command, used as the fallback discovery and pinning workflow.
+    The devices command, used as the fallback discovery and pinning workflow.
 
 mic_bridge_app/notifications.py
     Best-effort attention cues for important live-run events.
@@ -117,7 +118,7 @@ Input and output must belong to the same PortAudio host API. Recommended choices
 
 ### Keep selection tied to one current PortAudio inventory snapshot
 
-When `run` resolves devices, the selected numeric IDs, host API names, and same-host-API validation should all come from the same current PortAudio device view after any temporary Linux virtual-mic creation attempt.
+When `run` resolves devices, the selected numeric IDs, host API names, and same-host-API validation should all come from the same current PortAudio device view after any temporary Linux virtual mic creation attempt.
 
 Do not auto-select from one query and then validate against a different later query unless the design explicitly intends to refresh and re-resolve. If IDs drift between runs, hand off to `list-devices` rather than trying to repair stale IDs by name.
 
@@ -197,7 +198,7 @@ If a rule is platform-specific, device-selection-specific, or model-specific, ke
 
 - sample-rate compatibility: `modeling.py`
 - host-API choice, device tagging, bridge-output identification, channel probing, device scoring, auto-output rules, Linux/JACK block policy: `audio_system.py`
-- `list-devices` output: `listing.py`
+- `devices` output: `listing.py`
 - best-effort attention cues and cross-platform notification behavior: `notifications.py`
 - auto-selection flow, Linux target creation and cleanup, model download, stream setup, callback, live alert polling, run summaries: `runtime.py`
 - shared structures: `domain.py`
@@ -219,6 +220,8 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 
 ### `run`
 
+`run` may be explicit, or implied when the first top-level argument is a run flag. No arguments still show top-level help.
+
 1. resolve the selected model's native sample rate
 2. resolve explicit or auto-selected devices
 3. on Linux, optionally try to create the temporary virtual mic target if output auto-selection needs it (duplicate-aware)
@@ -230,7 +233,7 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 9. unload any temporary Linux virtual mic target created by this run
 10. print callback underflow/overflow summary on shutdown
 
-### `list-devices`
+### `devices`
 
 1. resolve the selected model's native sample rate
 2. choose a platform-friendly default host API filter
@@ -241,7 +244,7 @@ If behavior changes, update README.md, relevant docstrings, and this file in the
 
 - parser flags or help text: `cli.py`
 - host-API defaults, device tagging, bridge-output identification, channel probing, device scoring, auto-output rules, Linux/JACK block policy: `audio_system.py`
-- `list-devices` output: `listing.py`
+- `devices` output: `listing.py`
 - best-effort runtime attention cues and desktop/beep behavior: `notifications.py`
 - auto-selection flow, Linux target creation, model download, stream setup, callback, live alert polling, run summaries: `runtime.py`
 - shared structures: `domain.py`
@@ -270,7 +273,7 @@ If you are editing this repo:
 - keep `run` explicit
 - keep auto-output strict and same-host-API validation snapshot-based
 - keep Linux virtual-mic creation one-shot, temporary, and cleanup-aware
-- if numeric IDs drift, hand off to `list-devices`
+- if numeric IDs drift, hand off to `devices`
 - keep displayed commands and executed argv derived from the same source
 - keep model download one-shot
 - keep live alerts queued out of the callback and emitted on the main thread

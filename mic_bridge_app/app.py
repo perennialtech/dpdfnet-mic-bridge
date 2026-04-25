@@ -11,11 +11,18 @@ import sys
 from typing import Optional
 
 from .cli import build_parser
-from .listing import list_devices_command
+from .listing import devices_command
 from .runtime import run_command
 
-_COMMAND_NAMES = frozenset({"list-devices", "run"})
+_COMMAND_NAMES = frozenset({"devices", "list-devices", "run"})
 _HELP_FLAGS = frozenset({"-h", "--help"})
+_DEVICE_COMMAND_HINT_FLAGS = frozenset({"--all-apis", "--hostapi"})
+
+
+def _looks_like_device_command_flag(arg: str) -> bool:
+    if arg in _DEVICE_COMMAND_HINT_FLAGS:
+        return True
+    return any(arg.startswith(f"{flag}=") for flag in _DEVICE_COMMAND_HINT_FLAGS)
 
 
 def eprint(*args: object) -> None:
@@ -25,11 +32,11 @@ def eprint(*args: object) -> None:
 def _print_exception_message(exc: BaseException) -> None:
     text = str(exc).strip("\n")
     if not text:
-        eprint("Error.")
+        eprint("error: command failed.")
         return
 
     lines = text.splitlines()
-    eprint(f"Error: {lines[0]}")
+    eprint(f"error: {lines[0]}")
     for line in lines[1:]:
         eprint(line)
 
@@ -41,16 +48,17 @@ def _normalize_argv(argv: Optional[list[str]]) -> list[str]:
         return ["--help"]
 
     first = raw_args[0]
-    if first in _COMMAND_NAMES or first in _HELP_FLAGS:
+    if first == "list-devices":
+        return ["devices", *raw_args[1:]]
+
+    if first in {"devices", "run"} or first in _HELP_FLAGS:
         return raw_args
 
+    if any(_looks_like_device_command_flag(arg) for arg in raw_args):
+        return ["devices", *raw_args]
+
     if first.startswith("-"):
-        raise ValueError(
-            "Use the explicit 'run' subcommand for live-bridge flags.\n"
-            "Examples:\n"
-            "  python mic_bridge.py run\n"
-            "  python mic_bridge.py run --input 18 --output 16"
-        )
+        return ["run", *raw_args]
 
     return raw_args
 
@@ -61,24 +69,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         args = parser.parse_args(_normalize_argv(argv))
 
-        if args.command == "list-devices":
-            return list_devices_command(args)
+        if args.command == "devices":
+            return devices_command(args)
         if args.command == "run":
             return run_command(args)
     except KeyboardInterrupt:
-        eprint()
         text = str(sys.exc_info()[1]).strip("\n")
         if text:
             for line in text.splitlines():
                 eprint(line)
         else:
             eprint("Interrupted.")
-        eprint()
         return 130
     except Exception as exc:
-        eprint()
         _print_exception_message(exc)
-        eprint()
         return 2
 
     eprint("Internal error: unhandled command.")

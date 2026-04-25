@@ -1,6 +1,6 @@
 # Mic bridge
 
-Command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire. It reads a physical microphone, enhances it in real time, and writes the result into a virtual audio endpoint.
+Command-line DPDFNet microphone bridge for Windows 10/11 and Linux PipeWire. It reads a physical microphone, enhances it in real time, and writes the result to a virtual audio endpoint.
 
 Typical signal flows:
 
@@ -60,7 +60,7 @@ If the selected model is missing at startup, `run` tries one automatic download.
 5. If auto mode needs help, fall back to discovery and pin the IDs it shows:
 
    ```text
-   python mic_bridge.py list-devices
+   python mic_bridge.py devices
    python mic_bridge.py run --input 18 --output 16
    ```
 
@@ -82,7 +82,7 @@ If the selected model is missing at startup, `run` tries one automatic download.
 4. If auto mode still needs help:
 
    ```text
-   python mic_bridge.py list-devices
+   python mic_bridge.py devices
    python mic_bridge.py run --input 18 --output 16
    ```
 
@@ -100,26 +100,23 @@ If the selected model is missing at startup, `run` tries one automatic download.
 
 ## Runtime attention cues
 
-`python mic_bridge.py run` is often left in the background, so important live events try to raise attention promptly instead of waiting for you to notice the terminal later.
+`python mic_bridge.py run` is often left in the background, so important live events raise a short attention cue.
 
 During a run, the app surfaces:
 
 - the first real-time audio glitch reported by PortAudio
-- an escalation if those glitches keep happening
+- one escalation if glitches keep happening
 - an unexpected stop after streaming has already started
 
-Alerts are always printed in the terminal, and may also use:
+Alerts are always printed in the terminal. They may also use:
 
-- a short attention notice in the terminal
 - a terminal bell when attached to a TTY
-- on Linux, a best-effort desktop notification via `notify-send` if available
-- on Windows, a best-effort system beep via `winsound` if available
-
-The detailed next step still stays in the terminal. The live alerts are intentionally brief and deduplicated.
+- Linux desktop notification via `notify-send`
+- Windows system beep via `winsound`
 
 ## Pinned device IDs are intentionally ephemeral
 
-`list-devices` shows the current PortAudio device IDs. Those numeric IDs can change after reboots, hotplug events, backend changes, or audio-session churn.
+`devices` shows the current PortAudio device IDs. Those numeric IDs can change after reboots, hotplug events, backend changes, or audio-session churn.
 
 If a previously working command such as:
 
@@ -130,7 +127,7 @@ python mic_bridge.py run --input 18 --output 16
 stops working, rerun:
 
 ```text
-python mic_bridge.py list-devices
+python mic_bridge.py devices
 ```
 
 and pin fresh IDs. The tool intentionally does not fuzzy-match device names.
@@ -138,13 +135,20 @@ and pin fresh IDs. The tool intentionally does not fuzzy-match device names.
 ## Command overview
 
 ```text
-python mic_bridge.py              # shows top-level help
-python mic_bridge.py run          # live bridge with auto-selection
-python mic_bridge.py list-devices # fallback discovery workflow
-python mic_bridge.py run --input 18 --output 16  # pinned manual run
+python mic_bridge.py                       # shows top-level help
+python mic_bridge.py run                   # live bridge with auto-selection
+python mic_bridge.py devices               # discovery and pinning workflow
+python mic_bridge.py run --input 18 --output 16
+python mic_bridge.py --input 18 --output 16  # run is implied for run flags
 ```
 
-Run-specific flags belong after the explicit `run` subcommand.
+For clarity, examples keep the explicit `run` subcommand. For convenience, run flags may also be used at the top level.
+
+Device-listing flags such as `--all-apis` imply `devices` when no command is supplied:
+
+```text
+python mic_bridge.py --all-apis
+```
 
 Version 0 uses each model's native sample rate directly. There is no live resampling and no sample-rate override flag.
 

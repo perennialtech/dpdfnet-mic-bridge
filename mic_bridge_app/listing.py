@@ -1,5 +1,5 @@
 """
-Implementation of the `list-devices` command.
+Implementation of the `devices` command.
 
 This module owns the fallback discovery workflow and the user-facing
 explanation around automatic run behavior, probe results, and pinned commands.
@@ -15,7 +15,6 @@ from .audio_system import (
     build_device_probes,
     build_run_command_suggestion,
     format_jack_block_ms_hints,
-    format_probe_openability,
     format_samplerate,
     format_tags,
     jack_block_ms_for_frames,
@@ -49,6 +48,7 @@ def _print_probe_section(
     title: str,
     probes: list[DeviceProbe],
     samplerate: int,
+    verbose: bool,
 ) -> None:
     print(title)
 
@@ -58,15 +58,19 @@ def _print_probe_section(
 
     for probe in probes:
         max_label = "max_in" if probe.direction == "input" else "max_out"
-        print(f"  [{probe.device_id}] {probe.name}")
+        open_label = "no" if probe.open_channels is None else f"{probe.open_channels}ch"
         print(
-            "       "
-            f"hostapi={probe.hostapi_name}, "
-            f"{max_label}={probe.max_channels}, "
-            f"default_sr={format_samplerate(probe.default_samplerate)}, "
-            f"{format_probe_openability(probe, samplerate)}, "
-            f"tags={format_tags(probe.tags)}"
+            f"  [{probe.device_id:>3}] "
+            f"open@{samplerate}={open_label:<3}  "
+            f"{max_label}={probe.max_channels:<2}  "
+            f"default={format_samplerate(probe.default_samplerate):<6}  "
+            f"{probe.hostapi_name}  "
+            f"{probe.name}  "
+            f"({format_tags(probe.tags)})"
         )
+        if verbose and probe.open_channels is None and probe.probe_failures:
+            for failure in probe.probe_failures:
+                print(f"        {failure}")
 
 
 def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None:
@@ -76,13 +80,10 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
         _print_lines(
             [
                 "Windows notes:",
-                "  - Try: python mic_bridge.py run",
-                f"  - Probe results show whether a device opens at {samplerate} Hz.",
-                "  - Auto output only picks bridge targets such as VB-CABLE 'CABLE Input'.",
+                "  - Start with: python mic_bridge.py run",
+                f"  - open@{samplerate} shows whether PortAudio can open the device.",
                 "  - Apps should use VB-CABLE 'CABLE Output' as the microphone.",
-                "  - If auto mode stops, run list-devices and pin --input/--output IDs.",
-                "  - Device IDs can drift, rerun list-devices when they do.",
-                "  - Version 0 has no separate validate command, use run and stop with Ctrl+C.",
+                "  - If IDs drift, rerun: python mic_bridge.py devices",
             ]
         )
         print()
@@ -91,14 +92,13 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
     if system == "Linux":
         lines = [
             "Linux notes:",
-            "  - Try: python mic_bridge.py run",
+            "  - Start with: python mic_bridge.py run",
             "  - Keep input and output on the same host API.",
             "  - Auto output only picks virtual mic targets, never speakers/headphones or monitor/source endpoints.",
-            f"  - If none is visible, run may create a temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target.",
-            "  - A target created by the run is removed on exit.",
+            f"  - run may create a temporary '{LINUX_VIRTUAL_MIC_DESCRIPTION}' target and remove it on exit.",
             "  - For a reusable target, create it yourself with:",
             f"      {linux_virtual_mic_command()}",
-            f"  - Probe results show whether a device opens at {samplerate} Hz.",
+            f"  - open@{samplerate} shows whether PortAudio can open the device.",
             f"  - In apps, try '{LINUX_VIRTUAL_MIC_DESCRIPTION}' first, then its monitor/source if needed.",
         ]
         if hostapi_filter == "jack":
@@ -111,13 +111,7 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
                     f"    If you override it and hear glitches, try {format_jack_block_ms_hints(samplerate)} ms.",
                 ]
             )
-        lines.extend(
-            [
-                "  - If auto mode stops, run list-devices and pin --input/--output IDs.",
-                "  - Device IDs can drift, rerun list-devices when they do.",
-                "  - Version 0 has no separate validate command, use run and stop with Ctrl+C.",
-            ]
-        )
+        lines.append("  - If IDs drift, rerun: python mic_bridge.py devices")
         _print_lines(lines)
         print()
         return
@@ -127,13 +121,13 @@ def _print_platform_usage_notes(*, samplerate: int, hostapi_filter: str) -> None
             "Platform notes:",
             "  - Try: python mic_bridge.py run",
             f"  - Probe results show whether a device opens at {samplerate} Hz.",
-            "  - If pinned IDs stop working after device churn, rerun list-devices.",
+            "  - If pinned IDs stop working after device churn, rerun devices.",
         ]
     )
     print()
 
 
-def list_devices_command(args: argparse.Namespace) -> int:
+def devices_command(args: argparse.Namespace) -> int:
     probe_sample_rate = model_native_sample_rate(args.model)
 
     if platform.system() not in ("Windows", "Linux"):
@@ -161,23 +155,25 @@ def list_devices_command(args: argparse.Namespace) -> int:
     )
 
     print()
-    print(f"Device discovery for {args.model} @ {probe_sample_rate} Hz")
-    print(f"Fast path : {fast_path_command}")
-    print(f"Host API  : {HOSTAPI_FILTER_DISPLAY_NAMES[hostapi_filter]}")
+    print(f"Devices for {args.model} @ {probe_sample_rate} Hz")
+    print(f"Auto run : {fast_path_command}")
+    print(f"Host API : {HOSTAPI_FILTER_DISPLAY_NAMES[hostapi_filter]}")
     if hostapi_filter != "all":
-        print("Tip       : use --all-apis to show every PortAudio device.")
+        print("Tip      : use --all-apis to show every PortAudio device.")
     print()
 
     _print_probe_section(
         title="Input candidates",
         probes=input_probes,
         samplerate=probe_sample_rate,
+        verbose=bool(args.verbose),
     )
     print()
     _print_probe_section(
         title="Output candidates",
         probes=output_probes,
         samplerate=probe_sample_rate,
+        verbose=bool(args.verbose),
     )
     print()
 
@@ -202,7 +198,7 @@ def list_devices_command(args: argparse.Namespace) -> int:
     suggested_pair = suggest_run_pair(input_probes, output_probes)
     if suggested_pair is not None:
         input_probe, output_probe = suggested_pair
-        print("Suggested pinned command:")
+        print("Suggested run:")
         print(
             "  "
             + build_run_command_suggestion(

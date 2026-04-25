@@ -58,11 +58,11 @@ class RuntimeUserNotifier:
         self._emit_platform_attention(title=title, body=body, urgency=urgency)
 
     def _print_attention(self, *, title: str, body: str) -> None:
-        _eprint()
-        _eprint(f"[attention] {title}")
-        for line in body.strip().splitlines():
-            _eprint(f"  {line}")
-        _eprint()
+        compact_body = " ".join(body.strip().split())
+        if compact_body:
+            _eprint(f"[!] {title}: {compact_body}")
+        else:
+            _eprint(f"[!] {title}")
 
     def _ring_terminal_bell(self) -> None:
         stream = sys.stderr
