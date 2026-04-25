@@ -92,7 +92,7 @@ def _print_probe_section(
         return
 
     for probe in probes:
-        del samplerate
+
         open_label = (
             "closed" if probe.open_channels is None else f"{probe.open_channels}ch"
         )
