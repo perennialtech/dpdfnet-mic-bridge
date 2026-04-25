@@ -2,8 +2,7 @@
 Shared constants for the mic bridge project.
 
 Keep this module declarative. If a value implies runtime behavior, the code that
-interprets it belongs elsewhere. When user-facing policy changes, update the
-matching docs in `README.md` and `ARCHITECTURE.md` in the same change.
+interprets it belongs elsewhere.
 """
 
 from __future__ import annotations
