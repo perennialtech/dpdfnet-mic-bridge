@@ -1,9 +1,4 @@
-"""
-Shared constants for the mic bridge project.
-
-Keep this module declarative. If a value implies runtime behavior, the code that
-interprets it belongs elsewhere.
-"""
+"""Shared constants."""
 
 from __future__ import annotations
 
@@ -32,7 +27,6 @@ LINUX_VIRTUAL_MIC_DISCOVERY_POLL_SECONDS = 0.35
 # somewhat roomier exact block size instead of raw 10.0 ms.
 LINUX_JACK_AUTO_MIN_BLOCK_MS = 20.0
 LINUX_JACK_AUTO_MIN_BLOCK_FRAMES = 512
-JACK_BLOCK_HINT_FRAMES: tuple[int, ...] = (256, 512, 1024)
 
 # Display-name order intentionally defines CLI presentation order.
 HOSTAPI_FILTER_DISPLAY_NAMES: dict[str, str] = {

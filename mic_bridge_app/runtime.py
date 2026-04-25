@@ -1,10 +1,4 @@
-"""
-Implementation of the `run` command.
-
-This module owns device resolution, optional Linux virtual-mic creation,
-one-shot model download, stream setup, the callback, live alerts, and
-shutdown.
-"""
+"""Implementation of the `run` command."""
 
 from __future__ import annotations
 
@@ -46,7 +40,6 @@ from .constants import (
     DEFAULT_MODEL,
     LINUX_VIRTUAL_MIC_DISCOVERY_POLL_SECONDS,
     LINUX_VIRTUAL_MIC_DISCOVERY_TIMEOUT_SECONDS,
-    LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION,
     LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION,
     LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME,
 )
@@ -64,13 +57,6 @@ from .domain import (
 )
 from .modeling import model_native_sample_rate
 from .notifications import RuntimeUserNotifier
-
-_CALLBACK_RUNTIME_ISSUE_LABELS: dict[str, str] = {
-    "input_underflow": "capture underflow",
-    "input_overflow": "capture overflow",
-    "output_underflow": "playback underflow",
-    "output_overflow": "playback overflow",
-}
 
 
 def _eprint(*args: object) -> None:
@@ -439,77 +425,16 @@ def _cleanup_auto_created_linux_virtual_mic(
     )
 
 
-def _looks_like_missing_model_error(exc: BaseException, model_name: str) -> bool:
-    text = f"{type(exc).__name__}: {exc}".casefold()
-    missing_markers = (
-        "not found",
-        "missing",
-        "no such file",
-        "does not exist",
-        "could not find",
-        "cannot find",
-        "download",
-    )
-    model_markers = (
-        model_name.casefold(),
-        "model",
-        ".onnx",
-    )
-
-    return any(marker in text for marker in missing_markers) and any(
-        marker in text for marker in model_markers
-    )
-
-
-def _download_dpdfnet_model_once(model_name: str) -> None:
-    display_command = f"dpdfnet download {model_name}"
-    cli_path = shutil.which("dpdfnet")
-    command = (
-        [cli_path, "download", model_name]
-        if cli_path is not None
-        else [sys.executable, "-m", "dpdfnet", "download", model_name]
-    )
-
-    print(f"Model '{model_name}' is missing; downloading once...")
-
-    try:
-        completed = subprocess.run(command, check=False)
-    except KeyboardInterrupt as exc:
-        raise KeyboardInterrupt(
-            "Interrupted during automatic model download.\n"
-            f"Run this once manually, then retry:\n"
-            f"  {display_command}"
-        ) from exc
-    except OSError as exc:
-        raise RuntimeError(
-            f"Could not start the DPDFNet downloader.\nRun this once manually, then try again:\n  {display_command}"
-        ) from exc
-
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "Automatic model download did not finish successfully.\n"
-            "Run this once manually, then try again:\n"
-            f"  {display_command}"
-        )
-
-    print("Download finished.")
-
-
 def _build_stream_enhancer(dpdfnet_mod, *, model_name: str, verbose: bool):
     try:
         return dpdfnet_mod.StreamEnhancer(model=model_name, verbose=verbose)
     except Exception as exc:
-        if not _looks_like_missing_model_error(exc, model_name):
-            raise
-
-    _download_dpdfnet_model_once(model_name)
-
-    try:
-        return dpdfnet_mod.StreamEnhancer(model=model_name, verbose=verbose)
-    except Exception as exc:
+        detail = _first_line(str(exc)) or type(exc).__name__
         raise RuntimeError(
-            f"Model '{model_name}' still could not be loaded after the automatic download.\n"
-            f"Run this once manually, then retry:\n  dpdfnet download {model_name}\nDetails: {_first_line(str(exc)) or exc}"
+            f"Could not load DPDFNet model '{model_name}'.\n"
+            "If the model has not been downloaded yet, run:\n"
+            f"  dpdfnet download {model_name}\n"
+            f"Details: {detail}"
         ) from exc
 
 
@@ -949,22 +874,6 @@ def _print_run_summary(config: RunConfig) -> None:
     print()
 
 
-def _format_runtime_issue_summary(status_counter: CallbackStatusCounter) -> str | None:
-    parts: list[str] = []
-
-    for name, count in status_counter.nonzero_runtime_issue_counts():
-        label = _CALLBACK_RUNTIME_ISSUE_LABELS.get(name, name.replace("_", " "))
-        if count == 1:
-            parts.append(label)
-        else:
-            parts.append(f"{label} x{count}")
-
-    if not parts:
-        return None
-
-    return ", ".join(parts)
-
-
 def _is_jack_run(config: RunConfig) -> bool:
     return hostapi_filter_key_for_name(config.input_hostapi_name) == "jack"
 
@@ -1008,8 +917,9 @@ def _restart_command_for_block(config: RunConfig) -> tuple[str, str]:
             [
                 "--input",
                 str(config.input_device_id),
-                "--output",
-                str(config.output_device_id),
+                # TODO: PRINT THIS ONLY IF OUTPUT WAS NOT AUTO-DETECTED. DO NOT REMOVE THIS COMMENT UNDER ANY CIRCUMSTANCES UNLESS THIS SPECIFIC PROBLEM HAS BEEN ADDRESSED
+                # "--output",
+                # str(config.output_device_id),
             ]
         )
 
@@ -1035,13 +945,13 @@ def _emit_live_runtime_alert(
     alert_key: str,
 ) -> None:
     count = status_counter.runtime_issue_count
-    command, label = _restart_command_for_block(config)
+    command, _ = _restart_command_for_block(config)
 
     if alert_key == "first-runtime-issue":
         notifier.attention(
             title="Audio glitch detected",
             body=(
-                f"{count} callback warning(s). Current block {_format_current_block(config)}. If you hear dropouts, restart with: {command} ({label})."
+                f"{count} callback warning(s). If you hear dropouts, restart with: {command}."
             ),
             urgency="normal",
         )
@@ -1050,7 +960,7 @@ def _emit_live_runtime_alert(
     if alert_key == "repeated-runtime-issues":
         notifier.attention(
             title="Audio glitches continue",
-            body=f"{count} callback warnings so far. Stop and restart with: {command} ({label}).",
+            body=f"{count} callback warnings so far. Stop and restart with: {command}.",
             urgency="normal",
         )
         return

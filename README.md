@@ -20,13 +20,13 @@ Or with Pipenv:
 pipenv install
 ```
 
-Optional pre-download:
+Download the model before first run if needed:
 
 ```text
 dpdfnet download dpdfnet8_48khz_hr
 ```
 
-If the model is missing, startup tries one automatic download.
+The bridge does not download models during live-audio startup. If a model is missing, it prints the command to run.
 
 ## Start
 

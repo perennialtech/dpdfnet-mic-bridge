@@ -1,17 +1,4 @@
-"""
-Best-effort user-attention helpers for important live-run events.
-
-This module owns *how* attention cues are delivered, not *when* they should be
-emitted. Runtime code decides which live events deserve a cue; this module keeps
-delivery centralized and low-risk.
-
-Design goals:
-- short, human-facing messages
-- best-effort desktop/beep behavior without new hard dependencies
-- notification failures must never hide the real terminal handoff
-- safe to call from the main thread during a live run
-- never call this from inside the audio callback
-"""
+"""Best-effort user-attention helpers for live-run events."""
 
 from __future__ import annotations
 
@@ -26,18 +13,7 @@ def _eprint(*args: object) -> None:
 
 
 class RuntimeUserNotifier:
-    """
-    Emit concise attention cues for live-run events.
-
-    Delivery strategy:
-    - always print a short terminal notice on stderr
-    - ring the terminal bell when attached to a TTY
-    - on Linux, try `notify-send` if available
-    - on Windows, try `winsound.MessageBeep()` if available
-
-    All platform-specific cues are best-effort and intentionally ignored on
-    failure. The terminal handoff remains the source of truth.
-    """
+    """Print, beep, and optionally show a desktop notification."""
 
     def __init__(self, *, app_name: str = "Mic bridge") -> None:
         self._app_name = app_name

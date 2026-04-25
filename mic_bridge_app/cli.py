@@ -1,9 +1,4 @@
-"""
-Argument parser construction.
-
-This module deliberately contains only CLI definition and help text. Keeping
-parser setup separate from command execution makes future edits easier to audit.
-"""
+"""Argument parser construction."""
 
 from __future__ import annotations
 

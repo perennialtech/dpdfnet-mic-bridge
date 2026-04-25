@@ -1,9 +1,4 @@
-"""
-Model and sample-rate policy.
-
-Version 0 intentionally avoids live resampling. The selected model determines
-the stream rate; there is no sample-rate override flag.
-"""
+"""Model/sample-rate policy. There is no live resampling."""
 
 from __future__ import annotations
 

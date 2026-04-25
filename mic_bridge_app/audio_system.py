@@ -1,9 +1,4 @@
-"""
-Audio-system policy and probing helpers.
-
-This module owns PortAudio host-API policy, device tagging, probing, scoring,
-auto-selection rules, and Linux/JACK block-size behavior.
-"""
+"""PortAudio device probing, scoring, and block-size policy."""
 
 from __future__ import annotations
 
@@ -20,7 +15,6 @@ from .constants import (
     DEFAULT_MODEL,
     HOSTAPI_FILTER_ALIASES,
     HOSTAPI_PREFERENCE_SCORES,
-    JACK_BLOCK_HINT_FRAMES,
     LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION,
     LINUX_REUSABLE_VIRTUAL_MIC_SINK_NAME,
     LINUX_JACK_AUTO_MIN_BLOCK_FRAMES,
@@ -58,17 +52,6 @@ def _silence_native_stderr():
         finally:
             os.close(saved_fd)
             os.close(devnull_fd)
-
-
-def format_samplerate(value: float) -> str:
-    rounded = int(round(value))
-    if abs(value - rounded) < 1e-6:
-        return str(rounded)
-    return f"{value:.1f}"
-
-
-def format_tags(tags: tuple[str, ...]) -> str:
-    return ", ".join(tags) if tags else "-"
 
 
 def normalize_hostapi_name(name: str) -> str:
@@ -228,7 +211,7 @@ def infer_device_tags(name: str) -> tuple[str, ...]:
         "audio-interface",
     )
     add("airpods" in text or "bluetooth" in text, "bluetooth")
-    add("headphone" in text or "headset" in text, "headphones")
+    add("headphones" in text or "headset" in text, "headphones")
     add("speaker" in text, "speakers")
 
     return tuple(dict.fromkeys(tags))
@@ -383,19 +366,8 @@ def next_power_of_two(value: int) -> int:
     return 1 << (value - 1).bit_length()
 
 
-def is_power_of_two(value: int) -> bool:
-    return value > 0 and (value & (value - 1)) == 0
-
-
 def jack_block_ms_for_frames(frames: int, sample_rate: int) -> float:
     return (float(frames) * 1000.0) / float(sample_rate)
-
-
-def format_jack_block_ms_hints(sample_rate: int) -> str:
-    return ", ".join(
-        f"{jack_block_ms_for_frames(frames, sample_rate):.3f}"
-        for frames in JACK_BLOCK_HINT_FRAMES
-    )
 
 
 def recommended_linux_jack_block_frames(sample_rate: int) -> int:
@@ -597,12 +569,6 @@ def build_device_probes(
     output_probes.sort(key=_probe_sort_key)
 
     return input_probes, output_probes
-
-
-def format_probe_openability(probe: DeviceProbe, samplerate: int) -> str:
-    if probe.open_channels is None:
-        return f"opens@{samplerate}=no"
-    return f"opens@{samplerate}={probe.open_channels}ch"
 
 
 def is_viable_auto_input_candidate(probe: DeviceProbe) -> bool:

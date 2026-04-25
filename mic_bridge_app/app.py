@@ -1,9 +1,4 @@
-"""
-Top-level CLI dispatch.
-
-This file stays small: argv normalization, parser setup, command dispatch, and
-concise error formatting. Command implementations live in `listing.py` and `runtime.py`.
-"""
+"""CLI dispatch."""
 
 from __future__ import annotations
 
@@ -29,7 +24,7 @@ def eprint(*args: object) -> None:
 
 
 def _print_exception_message(exc: BaseException) -> None:
-    text = str(exc).strip("\n")
+    text = str(exc).strip()
     if not text:
         eprint("error: command failed.")
         return

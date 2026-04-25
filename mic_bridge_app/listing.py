@@ -1,9 +1,4 @@
-"""
-Implementation of the `devices` command.
-
-This module owns the fallback discovery workflow and the user-facing
-explanation around automatic run behavior, probe results, and pinned commands.
-"""
+"""Implementation of the `devices` command."""
 
 from __future__ import annotations
 
@@ -33,11 +28,6 @@ from .modeling import model_native_sample_rate
 
 def _eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
-
-
-def _print_lines(lines: list[str]) -> None:
-    for line in lines:
-        print(line)
 
 
 def _short_hostapi_name(hostapi_name: str) -> str:
@@ -89,7 +79,6 @@ def _print_probe_section(
     *,
     title: str,
     probes: list[DeviceProbe],
-    samplerate: int,
 ) -> None:
     print(title)
 
@@ -189,13 +178,11 @@ def devices_command(args: argparse.Namespace) -> int:
     _print_probe_section(
         title="Input candidates",
         probes=input_probes,
-        samplerate=probe_sample_rate,
     )
     print()
     _print_probe_section(
         title="Output candidates",
         probes=output_probes,
-        samplerate=probe_sample_rate,
     )
     print()
 

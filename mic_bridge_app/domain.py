@@ -1,14 +1,4 @@
-"""
-Shared data structures and small stateful helpers.
-
-These types are deliberately lightweight and easy to reason about. Keeping them
-centralized avoids rediscovering device-selection and callback-state behavior
-across multiple files.
-
-The device-resolution flow intentionally keeps a selected run tied to one
-current PortAudio inventory snapshot so numeric IDs, host API names, and later
-same-host-API validation all refer to the same device table.
-"""
+"""Small shared data structures."""
 
 from __future__ import annotations
 
@@ -26,13 +16,7 @@ from .constants import (
 
 @dataclass(frozen=True)
 class AudioInventory:
-    """
-    Snapshot of the current PortAudio device view.
-
-    The run path keeps explicit IDs, auto-selection results, and later host API
-    validation tied to one current inventory snapshot after any temporary Linux
-    virtual-mic creation attempt.
-    """
+    """Snapshot of the current PortAudio device view."""
 
     devices: list[dict]
     hostapi_names: list[str]
@@ -53,13 +37,7 @@ class DeviceProbe:
 
 @dataclass(frozen=True)
 class ProbeSnapshot:
-    """
-    One probing pass over the current audio inventory for a specific sample rate.
-
-    This groups the current inventory together with the derived input/output
-    probes so selection code does not accidentally mix probe results from one
-    device view with host API data from another.
-    """
+    """One probing pass over the current audio inventory."""
 
     inventory: AudioInventory
     input_probes: list[DeviceProbe]
@@ -77,13 +55,7 @@ class DeviceSelection:
 
 @dataclass(frozen=True)
 class ResolvedRunSelection:
-    """
-    Final device selection paired with the inventory snapshot it came from.
-
-    Keeping these together avoids a subtle class of bugs where a run selects
-    devices from one PortAudio query and later validates host APIs against a
-    different query.
-    """
+    """Final device selection paired with the inventory snapshot it came from."""
 
     selection: DeviceSelection
     inventory: AudioInventory
@@ -116,12 +88,7 @@ class RunConfig:
 
 @dataclass
 class LinuxVirtualMicLease:
-    """
-    Tracks a temporary Linux virtual mic module created for the current run.
-
-    Only modules created by this process belong here. Pre-existing user-created
-    targets stay outside this lease and must not be auto-unloaded.
-    """
+    """Temporary Linux virtual mic module created by this process."""
 
     module_id: int | None = None
     pactl_path: str | None = None
