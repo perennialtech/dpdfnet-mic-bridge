@@ -16,6 +16,7 @@ from .audio_system import (
     build_run_command_suggestion,
     hostapi_filter_key_for_name,
     is_likely_virtual_bridge_output,
+    is_viable_auto_input_candidate,
     linux_virtual_mic_command,
     query_audio_inventory,
     resolve_list_hostapi_filter,
@@ -24,6 +25,7 @@ from .audio_system import (
 from .constants import (
     DEFAULT_MODEL,
     HOSTAPI_FILTER_DISPLAY_NAMES,
+    LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION,
 )
 from .domain import DeviceProbe
 from .modeling import model_native_sample_rate
@@ -58,8 +60,13 @@ def _probe_badges(probe: DeviceProbe) -> str:
     tags = set(probe.tags)
     badges: list[str] = []
 
-    if is_likely_virtual_bridge_output(probe):
+    if probe.open_channels is not None and is_viable_auto_input_candidate(probe):
+        badges.append("auto")
+    elif is_likely_virtual_bridge_output(probe):
+        badges.append("auto")
         badges.append("bridge")
+    elif probe.open_channels is not None:
+        badges.append("pin-only")
     elif "dpdfnet" in tags:
         badges.append("dpdfnet")
     if "mic" in tags:
@@ -132,7 +139,9 @@ def _print_next_steps(
         is_likely_virtual_bridge_output(probe) for probe in output_probes
     ):
         print()
-        print("No bridge output is visible. Startup will try to create DPDFNet_Mic.")
+        print(
+            f"No bridge output is visible. Startup will try to create temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}."
+        )
         print("Permanent target:")
         print(f"  {linux_virtual_mic_command()}")
 
@@ -172,6 +181,9 @@ def devices_command(args: argparse.Namespace) -> int:
     print(f"Start  : {fast_path_command}")
     if hostapi_filter != "all":
         print("More   : python mic_bridge.py devices --all-apis")
+    print(
+        "Auto   : chooses devices marked auto; pin-only devices require --input/--output"
+    )
     print()
 
     _print_probe_section(

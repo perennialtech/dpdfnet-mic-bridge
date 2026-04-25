@@ -101,7 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"DPDFNet model to use (default: {DEFAULT_MODEL})",
     )
 
-    run_parser.add_argument(
+    block_group = run_parser.add_mutually_exclusive_group()
+    block_group.add_argument(
         "--block-ms",
         type=float,
         default=None,
@@ -110,6 +111,13 @@ def build_parser() -> argparse.ArgumentParser:
             "default: 10 ms, except Linux/JACK uses a JACK-friendly exact size"
         ),
     )
+    block_group.add_argument(
+        "--block-frames",
+        type=int,
+        default=None,
+        help="exact callback block size in frames; useful for JACK/PipeWire-JACK",
+    )
+
     run_parser.add_argument(
         "--latency",
         type=str,

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import platform
+import math
+import shlex
 from collections.abc import Callable
 import shutil
 import subprocess
@@ -31,18 +33,22 @@ from .audio_system import (
     is_likely_virtual_bridge_output,
     is_viable_auto_input_candidate,
     linux_virtual_mic_command,
-    linux_virtual_mic_command_args,
+    linux_temporary_virtual_mic_command_args,
     negotiate_stream_channels,
+    next_power_of_two,
     query_audio_inventory,
     resolve_effective_block_size,
     same_hostapi_guidance,
     suggest_run_pair,
 )
 from .constants import (
+    DEFAULT_LATENCY,
+    DEFAULT_MODEL,
     LINUX_VIRTUAL_MIC_DISCOVERY_POLL_SECONDS,
     LINUX_VIRTUAL_MIC_DISCOVERY_TIMEOUT_SECONDS,
-    LINUX_VIRTUAL_MIC_DESCRIPTION,
-    LINUX_VIRTUAL_MIC_SINK_NAME,
+    LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION,
+    LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION,
+    LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME,
 )
 from .dependencies import require_dpdfnet, require_sounddevice
 from .domain import (
@@ -159,7 +165,7 @@ def _build_no_auto_input_handoff(
         )
 
     return (
-        f"No usable microphone input opened at {sample_rate} Hz.\n"
+        f"No physical-looking microphone input opened at {sample_rate} Hz. Auto mode only picks devices that look like a mic, headset, Bluetooth mic, or audio interface.\n"
         + _list_devices_handoff("pin --input and --output.")
     )
 
@@ -257,7 +263,7 @@ def _extract_pactl_module_id(text: str | None) -> int | None:
     return None
 
 
-def _linux_virtual_mic_module_id(pactl_path: str) -> int | None:
+def _linux_virtual_mic_module_id(pactl_path: str, *, sink_name: str) -> int | None:
     try:
         completed = subprocess.run(
             [pactl_path, "list", "short", "modules"],
@@ -281,13 +287,13 @@ def _linux_virtual_mic_module_id(pactl_path: str) -> int | None:
         args_text = " ".join(columns[2:]).strip()
         if (
             columns[1].strip() == "module-null-sink"
-            and f"sink_name={LINUX_VIRTUAL_MIC_SINK_NAME}" in args_text
+            and f"sink_name={sink_name}" in args_text
         ):
             return int(columns[0].strip())
     return None
 
 
-def _linux_virtual_mic_sink_exists(pactl_path: str) -> bool | None:
+def _linux_virtual_mic_sink_exists(pactl_path: str, *, sink_name: str) -> bool | None:
     try:
         completed = subprocess.run(
             [pactl_path, "list", "short", "sinks"],
@@ -305,7 +311,7 @@ def _linux_virtual_mic_sink_exists(pactl_path: str) -> bool | None:
         if not line.strip():
             continue
         columns = line.split("\t") if "\t" in line else line.split()
-        if len(columns) >= 2 and columns[1].strip() == LINUX_VIRTUAL_MIC_SINK_NAME:
+        if len(columns) >= 2 and columns[1].strip() == sink_name:
             return True
 
     return False
@@ -320,16 +326,19 @@ def _try_create_linux_virtual_mic_target(
         return "failed", "`pactl` was not found."
 
     try:
-        sink_exists = _linux_virtual_mic_sink_exists(pactl_path)
+        sink_exists = _linux_virtual_mic_sink_exists(
+            pactl_path,
+            sink_name=LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME,
+        )
     except KeyboardInterrupt as exc:
         raise KeyboardInterrupt(
-            f"Interrupted while checking for '{LINUX_VIRTUAL_MIC_DESCRIPTION}'."
+            f"Interrupted while checking for '{LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}'."
         ) from exc
 
     if sink_exists is True:
         return "already-exists", None
 
-    command = list(linux_virtual_mic_command_args())
+    command = list(linux_temporary_virtual_mic_command_args())
     command[0] = pactl_path
 
     try:
@@ -341,7 +350,7 @@ def _try_create_linux_virtual_mic_target(
         )
     except KeyboardInterrupt as exc:
         raise KeyboardInterrupt(
-            f"Interrupted while creating '{LINUX_VIRTUAL_MIC_DESCRIPTION}'."
+            f"Interrupted while creating '{LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}'."
         ) from exc
     except OSError as exc:
         return "failed", str(exc)
@@ -351,7 +360,10 @@ def _try_create_linux_virtual_mic_target(
 
     module_id = _extract_pactl_module_id(completed.stdout)
     if module_id is None:
-        module_id = _linux_virtual_mic_module_id(pactl_path)
+        module_id = _linux_virtual_mic_module_id(
+            pactl_path,
+            sink_name=LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME,
+        )
     if module_id is None:
         return (
             "failed",
@@ -387,7 +399,7 @@ def _cleanup_auto_created_linux_virtual_mic(
     if pactl_path is None:
         return (
             None,
-            f"Could not remove the temporary Linux virtual mic target.\nIf it is still present, run:\n  {command_display}",
+            f"Could not remove temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}.\nIf it is still present, run:\n  {command_display}",
         )
 
     try:
@@ -400,12 +412,12 @@ def _cleanup_auto_created_linux_virtual_mic(
     except KeyboardInterrupt:
         return (
             None,
-            f"Interrupted while removing the temporary Linux virtual mic target.\nIf it is still present, run:\n  {command_display}",
+            f"Interrupted while removing temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}.\nIf it is still present, run:\n  {command_display}",
         )
     except OSError as exc:
         return (
             None,
-            f"Could not remove the temporary Linux virtual mic target.\nDetails: {exc}\nIf it is still present, run:\n  {command_display}",
+            f"Could not remove temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}.\nDetails: {exc}\nIf it is still present, run:\n  {command_display}",
         )
 
     if completed.returncode != 0:
@@ -416,13 +428,13 @@ def _cleanup_auto_created_linux_virtual_mic(
             return None, None
         return (
             None,
-            f"Could not remove the temporary Linux virtual mic target cleanly.\nDetails: {detail}\nIf it is still present, run:\n  {command_display}",
+            f"Could not remove temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION} cleanly.\nDetails: {detail}\nIf it is still present, run:\n  {command_display}",
         )
 
     lease.module_id = None
     lease.pactl_path = None
     return (
-        f"Removed temporary {LINUX_VIRTUAL_MIC_DESCRIPTION}.",
+        f"Removed temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}.",
         None,
     )
 
@@ -585,10 +597,10 @@ def _resolve_run_device_selection(
         if visible_bridge_output_exists():
             return
 
-        print(f"Setting up {LINUX_VIRTUAL_MIC_DESCRIPTION}...")
+        print(f"Setting up temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}...")
         status, detail = _try_create_linux_virtual_mic_target(linux_virtual_mic_lease)
         if status == "failed":
-            virtual_mic_note = f"Automatic Linux target creation failed for '{LINUX_VIRTUAL_MIC_DESCRIPTION}': {detail or 'unknown `pactl` error.'}"
+            virtual_mic_note = f"Automatic Linux target creation failed for temporary '{LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}': {detail or 'unknown `pactl` error.'}"
             return
 
         deadline = time.monotonic() + LINUX_VIRTUAL_MIC_DISCOVERY_TIMEOUT_SECONDS
@@ -606,17 +618,17 @@ def _resolve_run_device_selection(
         if visible_bridge_output_exists():
             if status == "created":
                 linux_virtual_mic_was_auto_created = True
-                print(f"Ready: temporary {LINUX_VIRTUAL_MIC_DESCRIPTION}.")
+                print(f"Ready: temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}.")
             else:
-                print(f"Using existing {LINUX_VIRTUAL_MIC_DESCRIPTION}.")
+                print(f"Using existing {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}.")
             return
 
         if status == "created":
             linux_virtual_mic_was_auto_created = True
-            virtual_mic_note = f"Created '{LINUX_VIRTUAL_MIC_DESCRIPTION}', but PortAudio still does not expose it as a usable output."
+            virtual_mic_note = f"Created temporary '{LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}', but PortAudio still does not expose it as a usable output."
             return
 
-        virtual_mic_note = f"'{LINUX_VIRTUAL_MIC_DESCRIPTION}' already exists, but PortAudio still does not expose it as a usable output."
+        virtual_mic_note = f"'{LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}' already exists, but PortAudio still does not expose it as a usable output."
 
     if requested_input_id is not None and requested_output_id is None:
         input_info = _get_current_run_device_info(
@@ -800,9 +812,13 @@ def _build_run_config(
         )
 
     requested_block_ms = None if args.block_ms is None else float(args.block_ms)
+    requested_block_frames = (
+        None if args.block_frames is None else int(args.block_frames)
+    )
     block_size, effective_block_ms, block_policy = resolve_effective_block_size(
         sample_rate=sample_rate,
         requested_block_ms=requested_block_ms,
+        requested_block_frames=requested_block_frames,
         hostapi_name=input_hostapi,
     )
 
@@ -829,6 +845,7 @@ def _build_run_config(
         sample_rate=sample_rate,
         block_ms=effective_block_ms,
         requested_block_ms=requested_block_ms,
+        requested_block_frames=requested_block_frames,
         block_policy=block_policy,
         block_size=block_size,
         input_device_id=selection.input_device_id,
@@ -872,6 +889,8 @@ def _print_run_summary(config: RunConfig) -> None:
         block_line += " (JACK)"
     elif config.block_policy == "explicit":
         block_line += f" (requested {config.requested_block_ms:.3f} ms)"
+    elif config.block_policy == "explicit-frames":
+        block_line += f" (requested {config.requested_block_frames} frames)"
 
     print()
     print("Mic bridge")
@@ -893,13 +912,15 @@ def _print_run_summary(config: RunConfig) -> None:
     )
 
     if config.linux_virtual_mic_was_auto_created:
-        print(f"  target temporary {LINUX_VIRTUAL_MIC_DESCRIPTION}; removed on exit")
+        print(
+            f"  target temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}; removed on exit"
+        )
 
     if system == "Windows":
         print("  app    select VB-CABLE 'CABLE Output'")
 
     elif system == "Linux":
-        print(f"  app    select {LINUX_VIRTUAL_MIC_DESCRIPTION} or its monitor/source")
+        print(f"  app    select '{config.output_device_name}' as the microphone")
 
     warnings: list[str] = []
     if should_print_generic_nonbridge_warning:
@@ -944,19 +965,83 @@ def _format_runtime_issue_summary(status_counter: CallbackStatusCounter) -> str 
     return ", ".join(parts)
 
 
+def _is_jack_run(config: RunConfig) -> bool:
+    return hostapi_filter_key_for_name(config.input_hostapi_name) == "jack"
+
+
+def _format_current_block(config: RunConfig) -> str:
+    return f"{config.block_size} frames / {config.block_ms:.3f} ms"
+
+
+def _next_block_setting(config: RunConfig) -> tuple[str, str, str]:
+    """
+    Return (flag, value, label) for the next sensible restart.
+
+    JACK users generally think in exact period sizes, so suggest frames there.
+    Other backends get a rounded millisecond suggestion.
+    """
+    if _is_jack_run(config):
+        next_frames = next_power_of_two(config.block_size + 1)
+        next_ms = (float(next_frames) * 1000.0) / float(config.sample_rate)
+        return (
+            "--block-frames",
+            str(next_frames),
+            f"{next_frames} frames / {next_ms:.3f} ms",
+        )
+
+    next_ms = int(math.ceil(max(20.0, config.block_ms + 5.0, config.block_ms * 1.5)))
+    next_frames = int(round(config.sample_rate * (next_ms / 1000.0)))
+    return "--block-ms", str(next_ms), f"{next_frames} frames / {next_ms:.3f} ms"
+
+
+def _restart_command_for_block(config: RunConfig) -> tuple[str, str]:
+    flag, value, label = _next_block_setting(config)
+
+    parts = ["python", "mic_bridge.py"]
+    if config.model_name != DEFAULT_MODEL:
+        parts.extend(["--model", config.model_name])
+
+    if config.linux_virtual_mic_was_auto_created:
+        parts.extend(["--input", str(config.input_device_id)])
+    else:
+        parts.extend(
+            [
+                "--input",
+                str(config.input_device_id),
+                "--output",
+                str(config.output_device_id),
+            ]
+        )
+
+    if config.latency != DEFAULT_LATENCY:
+        parts.extend(["--latency", config.latency])
+
+    parts.extend([flag, value])
+    return shlex.join(parts), label
+
+
+def _print_block_tuning_next_step(config: RunConfig) -> None:
+    command, label = _restart_command_for_block(config)
+    print("If audio broke up, restart with:")
+    print(f"  {command}")
+    print(f"  next block {label}; current {_format_current_block(config)}")
+
+
 def _emit_live_runtime_alert(
     *,
+    config: RunConfig,
     notifier: RuntimeUserNotifier,
     status_counter: CallbackStatusCounter,
     alert_key: str,
 ) -> None:
     count = status_counter.runtime_issue_count
+    command, label = _restart_command_for_block(config)
 
     if alert_key == "first-runtime-issue":
         notifier.attention(
             title="Audio glitch detected",
             body=(
-                f"{count} callback warning(s). If audio breaks up, increase --block-ms."
+                f"{count} callback warning(s). Current block {_format_current_block(config)}. If you hear dropouts, restart with: {command} ({label})."
             ),
             urgency="normal",
         )
@@ -965,7 +1050,7 @@ def _emit_live_runtime_alert(
     if alert_key == "repeated-runtime-issues":
         notifier.attention(
             title="Audio glitches continue",
-            body=f"{count} callback warnings so far. Try a larger --block-ms.",
+            body=f"{count} callback warnings so far. Stop and restart with: {command} ({label}).",
             urgency="normal",
         )
         return
@@ -973,6 +1058,7 @@ def _emit_live_runtime_alert(
 
 def _drain_live_runtime_alerts(
     *,
+    config: RunConfig,
     notifier: RuntimeUserNotifier,
     status_counter: CallbackStatusCounter,
     live_alerts: SimpleQueue[str],
@@ -984,6 +1070,7 @@ def _drain_live_runtime_alerts(
             return
 
         _emit_live_runtime_alert(
+            config=config,
             notifier=notifier,
             status_counter=status_counter,
             alert_key=alert_key,
@@ -1133,6 +1220,7 @@ def _run_command_impl(
 
             while True:
                 _drain_live_runtime_alerts(
+                    config=config,
                     notifier=notifier,
                     status_counter=status_counter,
                     live_alerts=live_alerts,
@@ -1145,6 +1233,7 @@ def _run_command_impl(
         stream_error = exc
     finally:
         _drain_live_runtime_alerts(
+            config=config,
             notifier=notifier,
             status_counter=status_counter,
             live_alerts=live_alerts,
@@ -1164,7 +1253,11 @@ def _run_command_impl(
             detail = _first_line(str(fatal_callback_error[0]))
             if detail is not None:
                 lines.append(f"Details: {detail}")
-            lines.append(_list_devices_handoff("retry or use a larger --block-ms."))
+            lines.append(
+                _list_devices_handoff(
+                    "retry, or restart with the block-size command printed above if timing warnings appeared."
+                )
+            )
             raise RuntimeError("\n".join(lines)) from fatal_callback_error[0]
 
         detail = _first_line(str(stream_error)) or str(stream_error)
@@ -1187,6 +1280,7 @@ def _run_command_impl(
             for line in nonzero_status_lines
         )
         print(f"Audio warnings: {compact}")
+        _print_block_tuning_next_step(config)
     else:
         print("Stopped cleanly.")
     print()

@@ -21,10 +21,12 @@ from .constants import (
     HOSTAPI_FILTER_ALIASES,
     HOSTAPI_PREFERENCE_SCORES,
     JACK_BLOCK_HINT_FRAMES,
+    LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION,
+    LINUX_REUSABLE_VIRTUAL_MIC_SINK_NAME,
     LINUX_JACK_AUTO_MIN_BLOCK_FRAMES,
     LINUX_JACK_AUTO_MIN_BLOCK_MS,
-    LINUX_VIRTUAL_MIC_DESCRIPTION,
-    LINUX_VIRTUAL_MIC_SINK_NAME,
+    LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION,
+    LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME,
 )
 from .dependencies import require_sounddevice
 from .domain import AudioInventory, DeviceProbe
@@ -349,8 +351,8 @@ def linux_virtual_mic_command_args() -> tuple[str, ...]:
         "load-module",
         "module-null-sink",
         "media.class=Audio/Source/Virtual",
-        f"sink_name={LINUX_VIRTUAL_MIC_SINK_NAME}",
-        f"sink_properties=device.description={LINUX_VIRTUAL_MIC_DESCRIPTION}",
+        f"sink_name={LINUX_REUSABLE_VIRTUAL_MIC_SINK_NAME}",
+        f"sink_properties=device.description={LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION}",
         "channels=1",
         "channel_map=mono",
     )
@@ -359,6 +361,20 @@ def linux_virtual_mic_command_args() -> tuple[str, ...]:
 def linux_virtual_mic_command() -> str:
     """Return the same recommended Linux virtual-mic command as display text."""
     return shlex.join(linux_virtual_mic_command_args())
+
+
+def linux_temporary_virtual_mic_command_args() -> tuple[str, ...]:
+    """Return the temporary Linux virtual mic creation command as argv."""
+    return (
+        "pactl",
+        "load-module",
+        "module-null-sink",
+        "media.class=Audio/Source/Virtual",
+        f"sink_name={LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME}",
+        f"sink_properties=device.description={LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}",
+        "channels=1",
+        "channel_map=mono",
+    )
 
 
 def next_power_of_two(value: int) -> int:
@@ -395,6 +411,7 @@ def resolve_effective_block_size(
     *,
     sample_rate: int,
     requested_block_ms: float | None,
+    requested_block_frames: int | None,
     hostapi_name: str,
     system: str | None = None,
 ) -> tuple[int, float, str]:
@@ -406,10 +423,21 @@ def resolve_effective_block_size(
 
     Policy names:
     - explicit
+    - explicit-frames
     - default-10ms
     - auto-linux-jack
     """
     current_system = platform.system() if system is None else system
+
+    if requested_block_ms is not None and requested_block_frames is not None:
+        raise ValueError("Use either --block-ms or --block-frames, not both.")
+
+    if requested_block_frames is not None:
+        if requested_block_frames <= 0:
+            raise ValueError("--block-frames must be > 0.")
+        block_size = int(requested_block_frames)
+        effective_ms = jack_block_ms_for_frames(block_size, sample_rate)
+        return block_size, effective_ms, "explicit-frames"
 
     if requested_block_ms is not None:
         if requested_block_ms <= 0:
@@ -584,6 +612,16 @@ def is_viable_auto_input_candidate(probe: DeviceProbe) -> bool:
     excluding obvious loopbacks, monitors, and bridge endpoints.
     """
     tags = set(probe.tags)
+    physical_input_tags = {
+        "mic",
+        "audio-interface",
+        "bluetooth",
+        "headphones",
+    }
+
+    if tags.isdisjoint(physical_input_tags):
+        return False
+
     return (
         probe.direction == "input"
         and probe.open_channels is not None

@@ -43,6 +43,8 @@ python mic_bridge.py devices
 python mic_bridge.py --input 15 --output 19
 ```
 
+`devices` marks what auto mode may choose with `auto`; everything else is `pin-only`.
+
 `devices` prints device names first and IDs next to them. IDs can change after reboots, hotplug events, backend changes, or audio-session churn; rerun `devices` when a pinned command stops working.
 
 ## Windows
@@ -72,9 +74,9 @@ Use:
 python mic_bridge.py
 ```
 
-If no usable bridge output exists, the bridge tries to create a temporary `DPDFNet_Mic` target, waits briefly for PortAudio/JACK/PipeWire to expose it, uses it, and removes it on exit.
+If no usable bridge output exists, the bridge tries to create a temporary `DPDFNet_Mic_Live` target, waits briefly for PortAudio/JACK/PipeWire to expose it, uses it, and removes it on exit.
 
-In apps, first select `DPDFNet_Mic` as the microphone. If the app does not show it, try its matching monitor/source.
+In apps, select the target printed by the run summary as the microphone. For the reusable target this is `DPDFNet_Mic`; for the temporary target this is `DPDFNet_Mic_Live`. If the app does not show it, try its matching source/monitor.
 
 For a reusable target instead of the temporary one:
 
@@ -87,6 +89,22 @@ If automatic selection fails:
 ```text
 python mic_bridge.py devices
 python mic_bridge.py --input <mic-id> --output <dpdfnet-mic-id>
+```
+
+## Glitches and block size
+
+If the audio backend reports overflows/underflows, the bridge prints a concrete restart command.
+
+For JACK/PipeWire-JACK, exact frame counts are usually the clearest knob:
+
+```text
+python mic_bridge.py --block-frames 2048
+```
+
+For other backends, milliseconds are also available:
+
+```text
+python mic_bridge.py --block-ms 30
 ```
 
 ## Runtime attention cues
@@ -103,6 +121,7 @@ python mic_bridge.py run                     # same as above
 python mic_bridge.py devices                 # list current devices
 python mic_bridge.py --input 15 --output 19  # pin IDs
 python mic_bridge.py devices --all-apis
+python mic_bridge.py --block-frames 2048     # exact JACK-friendly block size
 python -m mic_bridge_app
 ```
 
