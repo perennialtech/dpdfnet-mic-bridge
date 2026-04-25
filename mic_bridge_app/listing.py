@@ -83,7 +83,6 @@ def _print_probe_section(
     title: str,
     probes: list[DeviceProbe],
     samplerate: int,
-    verbose: bool,
 ) -> None:
     print(title)
 
@@ -92,12 +91,10 @@ def _print_probe_section(
         return
 
     for probe in probes:
-
         open_label = (
             "closed" if probe.open_channels is None else f"{probe.open_channels}ch"
         )
         details = [
-            f"id {probe.device_id}",
             open_label,
             _short_hostapi_name(probe.hostapi_name),
         ]
@@ -105,10 +102,7 @@ def _print_probe_section(
         if badges:
             details.append(badges)
 
-        print(f"  {probe.name}  ({', '.join(details)})")
-        if verbose and probe.open_channels is None and probe.probe_failures:
-            for failure in probe.probe_failures:
-                print(f"      {failure}")
+        print(f"  [{probe.device_id}]  {probe.name}  ({', '.join(details)})")
 
 
 def _print_next_steps(
@@ -184,14 +178,12 @@ def devices_command(args: argparse.Namespace) -> int:
         title="Input candidates",
         probes=input_probes,
         samplerate=probe_sample_rate,
-        verbose=bool(args.verbose),
     )
     print()
     _print_probe_section(
         title="Output candidates",
         probes=output_probes,
         samplerate=probe_sample_rate,
-        verbose=bool(args.verbose),
     )
     print()
 

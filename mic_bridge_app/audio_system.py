@@ -37,8 +37,7 @@ def _silence_native_stderr():
 
     ALSA/PortAudio can write directly to fd 2 while `check_*_settings()` tries
     devices that are expected to fail. The Python exception is still captured
-    and shown by `devices --verbose`; the raw native spam is not useful in the
-    normal UI.
+    and shown in the normal UI; the raw native spam is not useful.
     """
     try:
         stderr_fd = sys.stderr.fileno()

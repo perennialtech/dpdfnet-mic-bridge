@@ -71,11 +71,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="show every PortAudio host API",
     )
-    list_parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="show probe failure details",
-    )
 
     run_parser = subparsers.add_parser(
         "run",
