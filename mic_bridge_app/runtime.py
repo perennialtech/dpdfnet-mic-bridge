@@ -90,9 +90,6 @@ def _get_current_run_device_info(
     role: str,
 ) -> dict:
     """Resolve a device ID against one already-queried PortAudio inventory."""
-    if role not in {"input", "output"}:
-        raise ValueError(f"Unsupported device role '{role}'.")
-
     try:
         return device_info_from_inventory(inventory, device_id)
     except ValueError as exc:
@@ -279,7 +276,7 @@ def _linux_virtual_mic_module_id(pactl_path: str, *, sink_name: str) -> int | No
     return None
 
 
-def _linux_virtual_mic_sink_exists(pactl_path: str, *, sink_name: str) -> bool | None:
+def _linux_virtual_mic_sink_exists(pactl_path: str, *, sink_name: str) -> bool:
     try:
         completed = subprocess.run(
             [pactl_path, "list", "short", "sinks"],
@@ -288,10 +285,10 @@ def _linux_virtual_mic_sink_exists(pactl_path: str, *, sink_name: str) -> bool |
             text=True,
         )
     except OSError:
-        return None
+        return False
 
     if completed.returncode != 0:
-        return None
+        return False
 
     for line in completed.stdout.splitlines():
         if not line.strip():
@@ -311,17 +308,10 @@ def _try_create_linux_virtual_mic_target(
     if pactl_path is None:
         return "failed", "`pactl` was not found."
 
-    try:
-        sink_exists = _linux_virtual_mic_sink_exists(
-            pactl_path,
-            sink_name=LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME,
-        )
-    except KeyboardInterrupt as exc:
-        raise KeyboardInterrupt(
-            f"Interrupted while checking for '{LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}'."
-        ) from exc
-
-    if sink_exists is True:
+    if _linux_virtual_mic_sink_exists(
+        pactl_path,
+        sink_name=LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME,
+    ):
         return "already-exists", None
 
     command = list(linux_temporary_virtual_mic_command_args())
@@ -334,10 +324,6 @@ def _try_create_linux_virtual_mic_target(
             capture_output=True,
             text=True,
         )
-    except KeyboardInterrupt as exc:
-        raise KeyboardInterrupt(
-            f"Interrupted while creating '{LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}'."
-        ) from exc
     except OSError as exc:
         return "failed", str(exc)
 
@@ -379,7 +365,7 @@ def _cleanup_auto_created_linux_virtual_mic(
     if platform.system() != "Linux" or lease.module_id is None:
         return None, None
 
-    module_id = int(lease.module_id)
+    module_id = lease.module_id
     command_display = f"pactl unload-module {module_id}"
     pactl_path = lease.pactl_path or shutil.which("pactl")
     if pactl_path is None:
@@ -464,16 +450,17 @@ def _resolve_run_device_selection(
 
     hostapi_filter = "all"
     if requested_input_id is not None or requested_output_id is not None:
-        role = "input" if requested_input_id is not None else "output"
-        device_id = (
-            requested_input_id
-            if requested_input_id is not None
-            else requested_output_id
-        )
+        if requested_input_id is not None:
+            role = "input"
+            device_id = requested_input_id
+        else:
+            role = "output"
+            device_id = requested_output_id
+
         inventory_for_filter = query_audio_inventory()
         info_for_filter = _get_current_run_device_info(
             inventory=inventory_for_filter,
-            device_id=int(device_id),
+            device_id=device_id,
             role=role,
         )
         key = hostapi_filter_key_for_name(
@@ -692,8 +679,8 @@ def _build_run_config(
 
     sample_rate = model_native_sample_rate(args.model)
 
-    requested_input_id = None if args.input is None else int(args.input)
-    requested_output_id = None if args.output is None else int(args.output)
+    requested_input_id = args.input
+    requested_output_id = args.output
 
     resolved_selection = _resolve_run_device_selection(
         sample_rate=sample_rate,
@@ -715,16 +702,6 @@ def _build_run_config(
         role="output",
     )
 
-    if int(input_info["max_input_channels"]) < 1:
-        raise ValueError(
-            f"Selected input device {selection.input_device_id} exposes no input channels: {input_info['name']}"
-        )
-
-    if int(output_info["max_output_channels"]) < 1:
-        raise ValueError(
-            f"Selected output device {selection.output_device_id} exposes no output channels: {output_info['name']}"
-        )
-
     input_hostapi = hostapi_name_for_device(input_info, inventory.hostapi_names)
     output_hostapi = hostapi_name_for_device(output_info, inventory.hostapi_names)
 
@@ -736,10 +713,8 @@ def _build_run_config(
             f"{same_hostapi_guidance()}"
         )
 
-    requested_block_ms = None if args.block_ms is None else float(args.block_ms)
-    requested_block_frames = (
-        None if args.block_frames is None else int(args.block_frames)
-    )
+    requested_block_ms = args.block_ms
+    requested_block_frames = args.block_frames
     block_size, effective_block_ms, block_policy = resolve_effective_block_size(
         sample_rate=sample_rate,
         requested_block_ms=requested_block_ms,
@@ -786,7 +761,7 @@ def _build_run_config(
         output_tags=infer_device_tags(output_name),
         output_was_auto_selected=selection.output_was_auto_selected,
         linux_virtual_mic_was_auto_created=selection.linux_virtual_mic_was_auto_created,
-        latency=str(args.latency),
+        latency=args.latency,
     )
 
 
@@ -794,7 +769,6 @@ def _print_run_summary(config: RunConfig) -> None:
     system = platform.system()
     input_tags = set(config.input_tags)
     output_tags = set(config.output_tags)
-    input_hostapi_key = hostapi_filter_key_for_name(config.input_hostapi_name)
 
     # Reuse the same positive bridge-tag rule as auto mode so the run summary
     # does not quietly drift away from the selection policy.
@@ -864,7 +838,10 @@ def _print_run_summary(config: RunConfig) -> None:
         warnings.append("input looks like a monitor/source")
     if system == "Linux" and "monitor" in output_tags:
         warnings.append("output looks like a monitor/source")
-    if system == "Windows" and input_hostapi_key != "wasapi":
+    if (
+        system == "Windows"
+        and hostapi_filter_key_for_name(config.input_hostapi_name) != "wasapi"
+    ):
         warnings.append("WASAPI is usually best on Windows")
 
     if warnings:
@@ -874,14 +851,6 @@ def _print_run_summary(config: RunConfig) -> None:
     print()
 
 
-def _is_jack_run(config: RunConfig) -> bool:
-    return hostapi_filter_key_for_name(config.input_hostapi_name) == "jack"
-
-
-def _format_current_block(config: RunConfig) -> str:
-    return f"{config.block_size} frames / {config.block_ms:.3f} ms"
-
-
 def _next_block_setting(config: RunConfig) -> tuple[str, str, str]:
     """
     Return (flag, value, label) for the next sensible restart.
@@ -889,7 +858,7 @@ def _next_block_setting(config: RunConfig) -> tuple[str, str, str]:
     JACK users generally think in exact period sizes, so suggest frames there.
     Other backends get a rounded millisecond suggestion.
     """
-    if _is_jack_run(config):
+    if hostapi_filter_key_for_name(config.input_hostapi_name) == "jack":
         next_frames = next_power_of_two(config.block_size + 1)
         next_ms = (float(next_frames) * 1000.0) / float(config.sample_rate)
         return (
@@ -910,18 +879,9 @@ def _restart_command_for_block(config: RunConfig) -> tuple[str, str]:
     if config.model_name != DEFAULT_MODEL:
         parts.extend(["--model", config.model_name])
 
-    if config.linux_virtual_mic_was_auto_created:
-        parts.extend(["--input", str(config.input_device_id)])
-    else:
-        parts.extend(
-            [
-                "--input",
-                str(config.input_device_id),
-                # TODO: PRINT THIS ONLY IF OUTPUT WAS NOT AUTO-DETECTED. DO NOT REMOVE THIS COMMENT UNDER ANY CIRCUMSTANCES UNLESS THIS SPECIFIC PROBLEM HAS BEEN ADDRESSED
-                # "--output",
-                # str(config.output_device_id),
-            ]
-        )
+    parts.extend(["--input", str(config.input_device_id)])
+    if not config.output_was_auto_selected:
+        parts.extend(["--output", str(config.output_device_id)])
 
     if config.latency != DEFAULT_LATENCY:
         parts.extend(["--latency", config.latency])
@@ -934,7 +894,9 @@ def _print_block_tuning_next_step(config: RunConfig) -> None:
     command, label = _restart_command_for_block(config)
     print("If audio broke up, restart with:")
     print(f"  {command}")
-    print(f"  next block {label}; current {_format_current_block(config)}")
+    print(
+        f"  next block {label}; current {config.block_size} frames / {config.block_ms:.3f} ms"
+    )
 
 
 def _emit_live_runtime_alert(
@@ -987,38 +949,13 @@ def _drain_live_runtime_alerts(
         )
 
 
-def _looks_like_device_loss(detail: str) -> bool:
-    text = detail.casefold()
-    markers = (
-        "device unavailable",
-        "device removed",
-        "device disconnected",
-        "device lost",
-        "device is no longer available",
-        "invalid device",
-        "no device",
-        "unanticipated host error",
-        "host error",
-        "stream closed",
-        "stream is stopped",
-        "jack server is not running",
-        "broken pipe",
-        "connection terminated",
-        "transport is not running",
-    )
-    return any(marker in text for marker in markers)
-
-
 def _notify_unexpected_stream_stop(
     *,
     notifier: RuntimeUserNotifier,
-    detail: str,
     callback_failed: bool,
 ) -> None:
     if callback_failed:
         summary = "The live run aborted inside the audio callback and will exit."
-    elif _looks_like_device_loss(detail):
-        summary = "The selected audio device disappeared, became unavailable, or the audio backend dropped the stream."
     else:
         summary = "The live audio stream stopped unexpectedly and the run will exit."
 
@@ -1071,24 +1008,10 @@ def _run_command_impl(
     live_alerts: SimpleQueue[str] = SimpleQueue()
     streaming_started = False
 
-    def audio_callback(indata, outdata, frames, time_info, status) -> None:
-        """
-        Real-time audio callback.
-
-        Downmix to mono, run the enhancer, stage output through the FIFO, and
-        fill the output buffer. Live alerts are queued here and emitted by the
-        main thread.
-        """
-        del time_info  # unused in Version 0
-
+    def audio_callback(indata, outdata, frames, _time_info, status) -> None:
         try:
             for alert_key in status_counter.observe(status):
                 live_alerts.put(alert_key)
-
-            if indata.ndim != 2:
-                raise RuntimeError(
-                    f"Expected 2D input buffer, got shape {indata.shape}"
-                )
 
             if indata.shape[1] == 1:
                 mono_in = np.asarray(indata[:, 0], dtype=np.float32)
@@ -1100,7 +1023,6 @@ def _run_command_impl(
 
             mono_out = output_fifo.pop(frames)
 
-            outdata.fill(0.0)
             outdata[:, :] = mono_out[:, None]
 
         except Exception as exc:
@@ -1156,7 +1078,6 @@ def _run_command_impl(
         if fatal_callback_error:
             _notify_unexpected_stream_stop(
                 notifier=notifier,
-                detail=_first_line(str(fatal_callback_error[0])) or "callback abort",
                 callback_failed=True,
             )
             lines = ["The audio callback aborted unexpectedly."]
@@ -1174,7 +1095,6 @@ def _run_command_impl(
         if streaming_started:
             _notify_unexpected_stream_stop(
                 notifier=notifier,
-                detail=detail,
                 callback_failed=False,
             )
 
@@ -1204,7 +1124,7 @@ def run_command(args: argparse.Namespace) -> int:
     notifier = RuntimeUserNotifier()
     linux_virtual_mic_lease = LinuxVirtualMicLease()
 
-    result: int | None = None
+    result = 0
     interrupted: KeyboardInterrupt | None = None
     failure: Exception | None = None
 
@@ -1248,4 +1168,4 @@ def run_command(args: argparse.Namespace) -> int:
         print(cleanup_success_message)
         print()
 
-    return 0 if result is None else result
+    return result
