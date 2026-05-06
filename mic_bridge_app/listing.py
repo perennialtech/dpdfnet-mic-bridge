@@ -20,7 +20,6 @@ from .audio_system import (
 from .constants import (
     DEFAULT_MODEL,
     HOSTAPI_FILTER_DISPLAY_NAMES,
-    LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION,
 )
 from .domain import DeviceProbe
 from .modeling import model_native_sample_rate
@@ -128,10 +127,8 @@ def _print_next_steps(
         is_likely_virtual_bridge_output(probe) for probe in output_probes
     ):
         print()
-        print(
-            f"No bridge output is visible. Startup will try to create temporary {LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}."
-        )
-        print("Permanent target:")
+        print("No bridge output is visible.")
+        print("Create a virtual mic target:")
         print(f"  {linux_virtual_mic_command()}")
 
     print()

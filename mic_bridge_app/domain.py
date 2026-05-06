@@ -6,12 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
-
-from .constants import (
-    CALLBACK_RUNTIME_ALERT_FLAGS,
-    CALLBACK_RUNTIME_ALERT_REPEAT_COUNT,
-    CALLBACK_STATUS_FLAG_NAMES,
-)
+from .constants import CALLBACK_STATUS_FLAG_NAMES
 
 
 @dataclass(frozen=True)
@@ -45,23 +40,6 @@ class ProbeSnapshot:
 
 
 @dataclass(frozen=True)
-class DeviceSelection:
-    input_device_id: int
-    output_device_id: int
-    input_was_auto_selected: bool
-    output_was_auto_selected: bool
-    linux_virtual_mic_was_auto_created: bool
-
-
-@dataclass(frozen=True)
-class ResolvedRunSelection:
-    """Final device selection paired with the inventory snapshot it came from."""
-
-    selection: DeviceSelection
-    inventory: AudioInventory
-
-
-@dataclass(frozen=True)
 class RunConfig:
     model_name: str
     sample_rate: int
@@ -82,16 +60,7 @@ class RunConfig:
     output_channels: int
     output_tags: tuple[str, ...]
     output_was_auto_selected: bool
-    linux_virtual_mic_was_auto_created: bool
     latency: str
-
-
-@dataclass
-class LinuxVirtualMicLease:
-    """Temporary Linux virtual mic module created by this process."""
-
-    module_id: int | None = None
-    pactl_path: str | None = None
 
 
 class AudioFifo:
@@ -159,59 +128,26 @@ class AudioFifo:
 
 class CallbackStatusCounter:
     """
-    Collect callback status events for a shutdown summary and one-shot live
-    alerts.
+    Collect callback status events for the shutdown summary.
 
     We do not print inside the callback because printing in the audio callback
     is a bad real-time habit and can itself cause glitches.
-
-    Live-alert policy:
-    - first real-time issue: emit one marker
-    - repeated real-time issues: emit one escalation marker
-    - detailed per-flag counts still belong in the shutdown summary
     """
 
     def __init__(self) -> None:
         self.counts: dict[str, int] = dict.fromkeys(CALLBACK_STATUS_FLAG_NAMES, 0)
-        self._emitted_first_runtime_issue_alert = False
-        self._emitted_repeated_runtime_issue_alert = False
 
-    @property
-    def runtime_issue_count(self) -> int:
-        return sum(self.counts.get(name, 0) for name in CALLBACK_RUNTIME_ALERT_FLAGS)
-
-    def observe(self, status) -> tuple[str, ...]:
+    def observe(self, status) -> None:
         if not status:
-            return tuple()
-
-        previous_runtime_issue_count = self.runtime_issue_count
+            return
 
         for name in CALLBACK_STATUS_FLAG_NAMES:
             if bool(getattr(status, name, False)):
                 self.counts[name] += 1
 
-        alerts: list[str] = []
-        current_runtime_issue_count = self.runtime_issue_count
-
-        if (
-            current_runtime_issue_count > previous_runtime_issue_count
-            and not self._emitted_first_runtime_issue_alert
-        ):
-            self._emitted_first_runtime_issue_alert = True
-            alerts.append("first-runtime-issue")
-
-        if (
-            current_runtime_issue_count >= CALLBACK_RUNTIME_ALERT_REPEAT_COUNT
-            and not self._emitted_repeated_runtime_issue_alert
-        ):
-            self._emitted_repeated_runtime_issue_alert = True
-            alerts.append("repeated-runtime-issues")
-
-        return tuple(alerts)
-
-    def nonzero_runtime_issue_counts(self) -> list[tuple[str, int]]:
+    def nonzero_counts(self) -> list[tuple[str, int]]:
         pairs: list[tuple[str, int]] = []
-        for name in CALLBACK_RUNTIME_ALERT_FLAGS:
+        for name in CALLBACK_STATUS_FLAG_NAMES:
             count = self.counts.get(name, 0)
             if count:
                 pairs.append((name, count))

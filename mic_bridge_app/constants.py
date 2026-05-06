@@ -17,11 +17,6 @@ DEFAULT_LATENCY = "high"
 
 LINUX_REUSABLE_VIRTUAL_MIC_SINK_NAME = "dpdfnet_mic"
 LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION = "DPDFNet_Mic"
-LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME = "dpdfnet_mic_live"
-LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION = "DPDFNet_Mic_Live"
-
-LINUX_VIRTUAL_MIC_DISCOVERY_TIMEOUT_SECONDS = 5.0
-LINUX_VIRTUAL_MIC_DISCOVERY_POLL_SECONDS = 0.35
 
 # On Linux/JACK, Python + PortAudio tends to behave more reliably when given a
 # somewhat roomier exact block size instead of raw 10.0 ms.
@@ -75,18 +70,3 @@ CALLBACK_STATUS_FLAG_NAMES: tuple[str, ...] = (
     "output_overflow",
     "priming_output",
 )
-
-# These are the callback status flags that should trigger live user attention if
-# they show up during a background run. `priming_output` is intentionally
-# excluded because it commonly appears at startup and is not a user-problem.
-CALLBACK_RUNTIME_ALERT_FLAGS: tuple[str, ...] = (
-    "input_underflow",
-    "input_overflow",
-    "output_underflow",
-    "output_overflow",
-)
-
-# Alert once when the first real-time problem appears, then escalate once if the
-# total count keeps climbing. The detailed per-flag breakdown still belongs in
-# the shutdown summary.
-CALLBACK_RUNTIME_ALERT_REPEAT_COUNT = 10

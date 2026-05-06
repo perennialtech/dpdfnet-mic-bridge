@@ -19,8 +19,6 @@ from .constants import (
     LINUX_REUSABLE_VIRTUAL_MIC_SINK_NAME,
     LINUX_JACK_AUTO_MIN_BLOCK_FRAMES,
     LINUX_JACK_AUTO_MIN_BLOCK_MS,
-    LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION,
-    LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME,
 )
 from .dependencies import require_sounddevice
 from .domain import AudioInventory, DeviceProbe
@@ -344,20 +342,6 @@ def linux_virtual_mic_command_args() -> tuple[str, ...]:
 def linux_virtual_mic_command() -> str:
     """Return the same recommended Linux virtual-mic command as display text."""
     return shlex.join(linux_virtual_mic_command_args())
-
-
-def linux_temporary_virtual_mic_command_args() -> tuple[str, ...]:
-    """Return the temporary Linux virtual mic creation command as argv."""
-    return (
-        "pactl",
-        "load-module",
-        "module-null-sink",
-        "media.class=Audio/Source/Virtual",
-        f"sink_name={LINUX_TEMPORARY_VIRTUAL_MIC_SINK_NAME}",
-        f"sink_properties=device.description={LINUX_TEMPORARY_VIRTUAL_MIC_DESCRIPTION}",
-        "channels=1",
-        "channel_map=mono",
-    )
 
 
 def next_power_of_two(value: int) -> int:

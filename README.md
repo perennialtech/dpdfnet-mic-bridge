@@ -26,8 +26,6 @@ Download the model before first run if needed:
 dpdfnet download dpdfnet8_48khz_hr
 ```
 
-The bridge does not download models during live-audio startup. If a model is missing, it prints the command to run.
-
 ## Start
 
 ```text
@@ -68,21 +66,19 @@ python mic_bridge.py --input <mic-id> --output <cable-input-id>
 
 ## Linux PipeWire
 
-Use:
+Create a virtual microphone target first:
+
+```text
+pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
+```
+
+Then run:
 
 ```text
 python mic_bridge.py
 ```
 
-If no usable bridge output exists, the bridge tries to create a temporary `DPDFNet_Mic_Live` target, waits briefly for PortAudio/JACK/PipeWire to expose it, uses it, and removes it on exit.
-
-In apps, select the target printed by the run summary as the microphone. For the reusable target this is `DPDFNet_Mic`; for the temporary target this is `DPDFNet_Mic_Live`. If the app does not show it, try its matching source/monitor.
-
-For a reusable target instead of the temporary one:
-
-```text
-pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
-```
+In apps, select `DPDFNet_Mic` as the microphone. If the app does not show it, try its matching source/monitor.
 
 If automatic selection fails:
 
@@ -107,11 +103,9 @@ For other backends, milliseconds are also available:
 python mic_bridge.py --block-ms 30
 ```
 
-## Runtime attention cues
+## Runtime warnings
 
-Important live events print a short terminal notice. The bridge may also use a terminal bell, Linux `notify-send`, or Windows `winsound` when available.
-
-The callback itself never prints or launches notifications; alerts are queued and emitted from the main thread.
+The callback records PortAudio status warnings without printing from the real-time thread. On shutdown, the bridge prints a compact warning summary and a concrete restart command with a larger block size if needed.
 
 ## Commands
 
