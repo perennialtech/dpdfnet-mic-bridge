@@ -88,6 +88,11 @@ class AudioFifo:
     def available(self) -> int:
         return self._size
 
+    def clear(self) -> None:
+        self._chunks.clear()
+        self._head_index = 0
+        self._size = 0
+
     def push(self, samples: np.ndarray) -> None:
         x = np.asarray(samples, dtype=np.float32).reshape(-1)
         if x.size == 0:

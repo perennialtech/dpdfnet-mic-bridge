@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import math
 import platform
+import queue
 import shlex
 import sys
 import threading
@@ -201,6 +202,157 @@ def _build_stream_enhancer(dpdfnet_mod, *, model_name: str, verbose: bool):
             f"  dpdfnet download {model_name}\n"
             f"Details: {detail}"
         ) from exc
+
+
+class EnhancementWorker:
+    """
+    Runs DPDFNet away from PortAudio's real-time callback.
+
+    The callback is allowed to copy one input block, enqueue it without waiting,
+    and drain already-produced output. When the worker falls behind we prefer
+    bounded, audible damage (dropped stale input or zero-filled output) over
+    blocking the real-time thread.
+    """
+
+    def __init__(
+        self,
+        enhancer,
+        *,
+        sample_rate: int,
+        max_queued_blocks: int = 2,
+        max_output_blocks: int = 4,
+    ) -> None:
+        self._enhancer = enhancer
+        self._sample_rate = sample_rate
+        self._input_queue: queue.Queue[np.ndarray | None] = queue.Queue(
+            maxsize=max_queued_blocks
+        )
+        self._output_fifo = AudioFifo()
+        self._output_lock = threading.Lock()
+        self._max_output_frames = 0
+        self._output_started = False
+
+        self._stop = threading.Event()
+        self._failed = threading.Event()
+        self._failure: BaseException | None = None
+        self._thread: threading.Thread | None = None
+
+        self.input_drop_blocks = 0
+        self.output_underrun_blocks = 0
+        self.output_drop_blocks = 0
+        self.output_lock_misses = 0
+
+        self._max_output_blocks = max_output_blocks
+
+    @property
+    def failure(self) -> BaseException | None:
+        if not self._failed.is_set():
+            return None
+        return self._failure
+
+    def start(self) -> None:
+        self._thread = threading.Thread(
+            target=self._run,
+            name="dpdfnet-enhancer",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=2.0)
+
+    def submit_input(self, samples: np.ndarray) -> None:
+        if self._stop.is_set() or self._failed.is_set():
+            return
+
+        chunk = np.array(samples, dtype=np.float32, copy=True).reshape(-1)
+        if chunk.size == 0:
+            return
+
+        if self._max_output_frames == 0:
+            self._max_output_frames = int(chunk.size) * self._max_output_blocks
+
+        try:
+            self._input_queue.put_nowait(chunk)
+            return
+        except queue.Full:
+            pass
+
+        try:
+            self._input_queue.get_nowait()
+            self.input_drop_blocks += 1
+        except queue.Empty:
+            pass
+
+        try:
+            self._input_queue.put_nowait(chunk)
+        except queue.Full:
+            self.input_drop_blocks += 1
+
+    def pop_output(self, frames: int) -> np.ndarray:
+        silence = np.zeros(frames, dtype=np.float32)
+        if frames <= 0:
+            return silence
+
+        if not self._output_lock.acquire(blocking=False):
+            if self._output_started:
+                self.output_lock_misses += 1
+            return silence
+
+        try:
+            available = self._output_fifo.available
+            if available < frames and self._output_started:
+                self.output_underrun_blocks += 1
+            return self._output_fifo.pop(frames)
+        finally:
+            self._output_lock.release()
+
+    def warning_lines(self) -> list[str]:
+        pairs = (
+            ("worker_input_drops", self.input_drop_blocks),
+            ("worker_output_underruns", self.output_underrun_blocks),
+            ("worker_output_drops", self.output_drop_blocks),
+            ("callback_output_lock_misses", self.output_lock_misses),
+        )
+        return [f"  - {name}: {count}" for name, count in pairs if count]
+
+    def _run(self) -> None:
+        try:
+            while not self._stop.is_set():
+                try:
+                    samples = self._input_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
+                if samples is None:
+                    return
+
+                enhanced = self._enhancer.process(
+                    samples,
+                    sample_rate=self._sample_rate,
+                )
+                enhanced = np.asarray(enhanced, dtype=np.float32).reshape(-1)
+                if enhanced.size == 0:
+                    continue
+
+                with self._output_lock:
+                    if (
+                        self._max_output_frames > 0
+                        and self._output_fifo.available + int(enhanced.size)
+                        > self._max_output_frames
+                    ):
+                        self._output_fifo.clear()
+                        self.output_drop_blocks += 1
+
+                    self._output_fifo.push(enhanced)
+                    self._output_started = True
+
+        except Exception as exc:
+            self._failure = exc
+            self._failed.set()
 
 
 def _snapshot_for_selection(
@@ -597,7 +749,10 @@ def _run_command_impl(
     model_elapsed = time.perf_counter() - model_start
     print(f"Model ready ({model_elapsed:.2f}s).")
 
-    output_fifo = AudioFifo()
+    enhancement_worker = EnhancementWorker(
+        enhancer,
+        sample_rate=config.sample_rate,
+    )
     status_counter = CallbackStatusCounter()
     fatal_callback_error: list[BaseException] = []
     callback_failed = threading.Event()
@@ -607,17 +762,12 @@ def _run_command_impl(
             status_counter.observe(status)
 
             if indata.shape[1] == 1:
-                mono_in = np.asarray(indata[:, 0], dtype=np.float32)
+                mono_in = indata[:, 0]
             else:
-                mono_in = np.asarray(
-                    np.mean(indata, axis=1, dtype=np.float32),
-                    dtype=np.float32,
-                )
+                mono_in = np.mean(indata, axis=1, dtype=np.float32)
 
-            enhanced = enhancer.process(mono_in, sample_rate=config.sample_rate)
-            output_fifo.push(enhanced)
-
-            mono_out = output_fifo.pop(frames)
+            enhancement_worker.submit_input(mono_in)
+            mono_out = enhancement_worker.pop_output(frames)
 
             outdata[:, :] = mono_out[:, None]
 
@@ -633,6 +783,7 @@ def _run_command_impl(
     stream_error: Exception | None = None
     interrupted = False
 
+    enhancement_worker.start()
     try:
         with sd_mod.Stream(
             samplerate=config.sample_rate,
@@ -653,6 +804,13 @@ def _run_command_impl(
                     )
                     break
 
+                worker_failure = enhancement_worker.failure
+                if worker_failure is not None:
+                    stream_error = RuntimeError(
+                        "The enhancement worker stopped unexpectedly."
+                    )
+                    break
+
                 if not stream.active:
                     stream_error = RuntimeError(
                         "The audio stream stopped unexpectedly."
@@ -665,10 +823,21 @@ def _run_command_impl(
         interrupted = True
     except Exception as exc:
         stream_error = exc
+    finally:
+        enhancement_worker.stop()
 
     if interrupted:
         print()
         print("Stopping...")
+    elif (worker_failure := enhancement_worker.failure) is not None:
+        lines = ["The enhancement worker stopped unexpectedly."]
+        detail = _first_line(str(worker_failure))
+        if detail is not None:
+            lines.append(f"Details: {detail}")
+        lines.append(
+            "If this happens during streaming, retry with a larger block size."
+        )
+        raise RuntimeError("\n".join(lines)) from worker_failure
     elif stream_error is not None:
         if fatal_callback_error:
             lines = ["The audio callback aborted unexpectedly."]
@@ -689,11 +858,12 @@ def _run_command_impl(
         raise RuntimeError("\n".join(lines)) from stream_error
 
     nonzero_status_lines = status_counter.nonzero_lines()
+    worker_warning_lines = enhancement_worker.warning_lines()
+    warning_lines = [*nonzero_status_lines, *worker_warning_lines]
     print()
-    if nonzero_status_lines:
+    if warning_lines:
         compact = ", ".join(
-            line.strip().removeprefix("- ").replace(": ", "=")
-            for line in nonzero_status_lines
+            line.strip().removeprefix("- ").replace(": ", "=") for line in warning_lines
         )
         print(f"Audio warnings: {compact}")
         _print_block_tuning_next_step(config)
