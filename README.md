@@ -1,84 +1,165 @@
 # mic-bridge
 
-Small command-line DPDFNet microphone bridge for Windows and Linux PipeWire. It reads a real microphone, enhances it in real time, and writes the result to a virtual microphone target.
-
-Typical flow:
+This tool takes your real microphone, runs [DPDFNet](https://github.com/ceva-ip/DPDFNet) enhancement on it, then sends the cleaned audio into a virtual microphone that apps like Discord, OBS, or games can use.
 
 ```text
-physical mic -> mic-bridge -> virtual mic endpoint -> Discord/OBS/game
+physical mic -> mic-bridge -> virtual mic -> Discord/OBS/game
 ```
 
-## Install
+## 1. Install `uv`
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then from this project directory run:
+Install `uv` first:
+
+<https://docs.astral.sh/uv/getting-started/installation/>
+
+Then open a terminal in the `mic-bridge` project folder and run:
 
 ```text
 uv sync
 ```
 
-Download the model before first run if needed:
+That installs the project dependencies.
+
+## 2. Download the DPDFNet model
+
+Run this once before the first use:
 
 ```text
 uv run dpdfnet download dpdfnet8_48khz_hr
 ```
 
-## Start
+## 3. Set up your virtual microphone
+
+### On Windows
+
+Install VB-CABLE yourself first:
+
+<https://vb-audio.com/Cable/>
+
+After installing it, you should have endpoints like:
 
 ```text
-uv run mic-bridge
+CABLE Input
+CABLE Output
 ```
 
-Stop with Ctrl+C.
+The bridge writes audio into `CABLE Input`.
 
-If auto-selection needs help:
+Apps should use `CABLE Output` as the microphone.
+
+So in Discord, OBS, etc., choose:
 
 ```text
-uv run mic-bridge devices
-uv run mic-bridge --input 15 --output 19
+CABLE Output
 ```
 
-`devices` marks what auto mode may choose with `auto`; everything else is `pin-only`.
+as the mic.
 
-`devices` prints device names first and IDs next to them. IDs can change after reboots, hotplug events, backend changes, or audio-session churn; rerun `devices` when a pinned command stops working.
+### On Linux with PipeWire
 
-## Windows
-
-Install [VB-CABLE](https://vb-audio.com/Cable/) yourself first. This tool does not install it.
-
-Use:
-
-```text
-uv run mic-bridge
-```
-
-In apps, choose VB-CABLE's recording endpoint, usually `CABLE Output`, as the microphone. The bridge writes to the playback endpoint, usually `CABLE Input`.
-
-If automatic selection fails:
-
-```text
-uv run mic-bridge devices
-uv run mic-bridge --input <mic-id> --output <cable-input-id>
-```
-
-## Linux PipeWire
-
-Create a virtual microphone target first:
+Create the virtual mic target first:
 
 ```text
 pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
 ```
 
-Then run:
+Then apps should select:
+
+```text
+DPDFNet_Mic
+```
+
+as the microphone.
+
+Some apps may show the matching source or monitor instead, so pick the one that receives the bridge audio.
+
+## 4. Start the bridge
+
+From the project folder:
 
 ```text
 uv run mic-bridge
 ```
 
-In apps, select `DPDFNet_Mic` as the microphone. If the app does not show it, try its matching source/monitor.
+Leave that terminal open while using your mic.
 
-If automatic selection fails:
+Stop it with:
+
+```text
+Ctrl+C
+```
+
+## 5. Choose the virtual mic in your app
+
+In Discord, OBS, a game, or another app:
+
+On Windows, choose:
+
+```text
+CABLE Output
+```
+
+On Linux, choose:
+
+```text
+DPDFNet_Mic
+```
+
+Now your app should hear the enhanced mic audio instead of the raw physical mic.
+
+## When auto device selection gets confused
+
+List devices:
 
 ```text
 uv run mic-bridge devices
-uv run mic-bridge --input <mic-id> --output <dpdfnet-mic-id>
 ```
+
+It will show device names and IDs.
+
+Then run with a specific input and output:
+
+```text
+uv run mic-bridge --input <mic-id> --output <virtual-mic-id>
+```
+
+Example shape:
+
+```text
+uv run mic-bridge --input 15 --output 19
+```
+
+Use your real microphone as `--input`.
+
+Use the virtual target as `--output`, such as `CABLE Input` on Windows or the `DPDFNet_Mic` target on Linux.
+
+Device IDs can change after rebooting, unplugging devices, or audio backend changes, so rerun:
+
+```text
+uv run mic-bridge devices
+```
+
+when a pinned command stops working.
+
+## The usual full flow
+
+### Windows
+
+```text
+uv sync
+uv run dpdfnet download dpdfnet8_48khz_hr
+uv run mic-bridge
+```
+
+Then select `CABLE Output` in Discord/OBS/game.
+
+### Linux PipeWire
+
+```text
+uv sync
+uv run dpdfnet download dpdfnet8_48khz_hr
+pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
+uv run mic-bridge
+```
+
+Then select `DPDFNet_Mic` in Discord/OBS/game.
