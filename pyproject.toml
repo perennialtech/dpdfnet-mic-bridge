@@ -14,7 +14,7 @@ dependencies = [
 package = false
 
 [tool.basedpyright]
-reportMissingTypeStubs = false
+typeCheckingMode = "standard"
 
 [dependency-groups]
 dev = [
