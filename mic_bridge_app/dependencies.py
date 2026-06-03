@@ -1,4 +1,4 @@
-"""Lazy optional dependency loading."""
+"""Lazy dependency loading."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ def _require(package_name: str):
     except ImportError as exc:
         raise RuntimeError(
             f"The '{package_name}' package is not installed.\n"
-            "Install it with:\n"
-            f"  pip install {package_name}"
+            "Install the project dependencies with:\n"
+            "  uv sync"
         ) from exc
 
 

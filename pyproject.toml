@@ -1,0 +1,26 @@
+[project]
+name = "mic-bridge"
+version = "0.1.0"
+description = "Small command-line DPDFNet microphone bridge"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "dpdfnet>=0.5.1",
+    "numpy>=2.4.6",
+    "sounddevice>=0.5.5",
+]
+
+[tool.uv]
+package = false
+
+[tool.basedpyright]
+reportMissingTypeStubs = false
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.6",
+    "black>=26.5.1",
+    "isort>=8.0.1",
+    "mypy>=2.1.0",
+    "ruff>=0.15.15",
+]
