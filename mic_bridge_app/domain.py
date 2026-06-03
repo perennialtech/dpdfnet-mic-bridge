@@ -6,6 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
+
 from .constants import CALLBACK_STATUS_FLAG_NAMES
 
 

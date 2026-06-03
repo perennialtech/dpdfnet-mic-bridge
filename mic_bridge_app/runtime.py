@@ -8,41 +8,24 @@ import platform
 import shlex
 import sys
 import time
+from typing import Callable
 
 import numpy as np
 
-from .audio_system import (
-    build_device_probes,
-    choose_best_auto_input,
-    choose_best_auto_output,
-    device_info_from_inventory,
-    has_bridge_output_tags,
-    hostapi_filter_key_for_name,
-    hostapi_name_for_device,
-    infer_device_tags,
-    is_likely_virtual_bridge_output,
-    is_viable_auto_input_candidate,
-    linux_virtual_mic_command,
-    negotiate_stream_channels,
-    next_power_of_two,
-    query_audio_inventory,
-    resolve_effective_block_size,
-    same_hostapi_guidance,
-    suggest_run_pair,
-)
-from .constants import (
-    DEFAULT_LATENCY,
-    DEFAULT_MODEL,
-)
+from .audio_system import (build_device_probes, choose_best_auto_input,
+                           choose_best_auto_output, device_info_from_inventory,
+                           has_bridge_output_tags, hostapi_filter_key_for_name,
+                           hostapi_name_for_device, infer_device_tags,
+                           is_likely_virtual_bridge_output,
+                           is_viable_auto_input_candidate,
+                           linux_virtual_mic_command,
+                           negotiate_stream_channels, next_power_of_two,
+                           query_audio_inventory, resolve_effective_block_size,
+                           same_hostapi_guidance, suggest_run_pair)
+from .constants import DEFAULT_LATENCY, DEFAULT_MODEL
 from .dependencies import require_dpdfnet, require_sounddevice
-from .domain import (
-    AudioFifo,
-    AudioInventory,
-    CallbackStatusCounter,
-    DeviceProbe,
-    ProbeSnapshot,
-    RunConfig,
-)
+from .domain import (AudioFifo, AudioInventory, CallbackStatusCounter,
+                     DeviceProbe, ProbeSnapshot, RunConfig)
 from .modeling import model_native_sample_rate
 
 

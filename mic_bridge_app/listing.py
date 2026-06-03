@@ -6,21 +6,13 @@ import argparse
 import platform
 import sys
 
-from .audio_system import (
-    build_device_probes,
-    build_run_command_suggestion,
-    hostapi_filter_key_for_name,
-    is_likely_virtual_bridge_output,
-    is_viable_auto_input_candidate,
-    linux_virtual_mic_command,
-    query_audio_inventory,
-    resolve_list_hostapi_filter,
-    suggest_run_pair,
-)
-from .constants import (
-    DEFAULT_MODEL,
-    HOSTAPI_FILTER_DISPLAY_NAMES,
-)
+from .audio_system import (build_device_probes, build_run_command_suggestion,
+                           hostapi_filter_key_for_name,
+                           is_likely_virtual_bridge_output,
+                           is_viable_auto_input_candidate,
+                           linux_virtual_mic_command, query_audio_inventory,
+                           resolve_list_hostapi_filter, suggest_run_pair)
+from .constants import DEFAULT_MODEL, HOSTAPI_FILTER_DISPLAY_NAMES
 from .domain import DeviceProbe
 from .modeling import model_native_sample_rate
 

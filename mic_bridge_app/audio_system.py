@@ -2,24 +2,20 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import math
 import os
 import platform
 import shlex
 import sys
+from contextlib import contextmanager
 from typing import Iterable
 
-from .constants import (
-    DEFAULT_BLOCK_MS,
-    DEFAULT_MODEL,
-    HOSTAPI_FILTER_ALIASES,
-    HOSTAPI_PREFERENCE_SCORES,
-    LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION,
-    LINUX_REUSABLE_VIRTUAL_MIC_SINK_NAME,
-    LINUX_JACK_AUTO_MIN_BLOCK_FRAMES,
-    LINUX_JACK_AUTO_MIN_BLOCK_MS,
-)
+from .constants import (DEFAULT_BLOCK_MS, DEFAULT_MODEL,
+                        HOSTAPI_FILTER_ALIASES, HOSTAPI_PREFERENCE_SCORES,
+                        LINUX_JACK_AUTO_MIN_BLOCK_FRAMES,
+                        LINUX_JACK_AUTO_MIN_BLOCK_MS,
+                        LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION,
+                        LINUX_REUSABLE_VIRTUAL_MIC_SINK_NAME)
 from .dependencies import require_sounddevice
 from .domain import AudioInventory, DeviceProbe
 
@@ -38,7 +34,7 @@ def _silence_native_stderr():
         saved_fd = os.dup(stderr_fd)
         devnull_fd = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull_fd, stderr_fd)
-    except (AttributeError, OSError, ValueError):
+    except AttributeError, OSError, ValueError:
         yield
         return
 

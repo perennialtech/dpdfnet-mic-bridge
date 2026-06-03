@@ -5,12 +5,8 @@ from __future__ import annotations
 import argparse
 
 from .audio_system import linux_virtual_mic_command
-from .constants import (
-    DEFAULT_LATENCY,
-    DEFAULT_MODEL,
-    LIST_DEVICE_HOSTAPI_CHOICES,
-    MODEL_SAMPLE_RATES,
-)
+from .constants import (DEFAULT_LATENCY, DEFAULT_MODEL,
+                        LIST_DEVICE_HOSTAPI_CHOICES, MODEL_SAMPLE_RATES)
 
 
 def build_parser() -> argparse.ArgumentParser:
