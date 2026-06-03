@@ -25,14 +25,6 @@ Then open a terminal in the mic-bridge project folder and run:
 This installs the project dependencies.
 
 
-DOWNLOAD THE DPDFNET MODEL
-==========================
-
-Run this once before the first use:
-
-    uv run dpdfnet download dpdfnet8_48khz_hr
-
-
 SET UP YOUR VIRTUAL MICROPHONE
 ==============================
 
@@ -142,7 +134,6 @@ WINDOWS
 -------
 
     uv sync
-    uv run dpdfnet download dpdfnet8_48khz_hr
     uv run mic-bridge
 
 Then select CABLE Output in Discord, OBS, a game, or another app.
@@ -152,7 +143,6 @@ LINUX PIPEWIRE
 --------------
 
     uv sync
-    uv run dpdfnet download dpdfnet8_48khz_hr
     pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
     uv run mic-bridge
 
