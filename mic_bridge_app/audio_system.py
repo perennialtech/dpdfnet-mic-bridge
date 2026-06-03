@@ -34,7 +34,7 @@ def _silence_native_stderr():
         saved_fd = os.dup(stderr_fd)
         devnull_fd = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull_fd, stderr_fd)
-    except AttributeError, OSError, ValueError:
+    except (AttributeError, OSError, ValueError):
         yield
         return
 
