@@ -607,7 +607,10 @@ def _run_command_impl(
             if indata.shape[1] == 1:
                 mono_in = np.asarray(indata[:, 0], dtype=np.float32)
             else:
-                mono_in = np.mean(indata, axis=1, dtype=np.float32)
+                mono_in = np.asarray(
+                    np.mean(indata, axis=1, dtype=np.float32),
+                    dtype=np.float32,
+                )
 
             enhanced = enhancer.process(mono_in, sample_rate=config.sample_rate)
             output_fifo.push(enhanced)
