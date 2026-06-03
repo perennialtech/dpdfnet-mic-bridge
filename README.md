@@ -82,37 +82,3 @@ If automatic selection fails:
 uv run mic-bridge devices
 uv run mic-bridge --input <mic-id> --output <dpdfnet-mic-id>
 ```
-
-## Glitches and block size
-
-If the audio backend reports overflows/underflows, the bridge prints a concrete restart command.
-
-For JACK/PipeWire-JACK, exact frame counts are usually the clearest knob:
-
-```text
-uv run mic-bridge --block-frames 2048
-```
-
-For other backends, milliseconds are also available:
-
-```text
-uv run mic-bridge --block-ms 30
-```
-
-## Runtime warnings
-
-The callback records PortAudio status warnings without printing from the real-time thread. On shutdown, the bridge prints a compact warning summary and a concrete restart command with a larger block size if needed.
-
-## Commands
-
-```text
-uv run mic-bridge                         # start bridge
-uv run mic-bridge run                     # same as above
-uv run mic-bridge devices                 # list current devices
-uv run mic-bridge --input 15 --output 19  # pin IDs
-uv run mic-bridge devices --all-apis
-uv run mic-bridge --block-frames 2048     # exact JACK-friendly block size
-uv run python -m mic_bridge_app
-```
-
-Version 0 uses the selected model's native sample rate. There is no live resampling and no sample-rate override flag.
