@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mic-bridge = "mic_bridge_app.app:main"
+mic-bridge = "mic_bridge.app:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -19,9 +19,6 @@ build-backend = "hatchling.build"
 
 [tool.basedpyright]
 typeCheckingMode = "standard"
-
-[tool.hatch.build.targets.wheel]
-packages = ["mic_bridge_app"]
 
 [dependency-groups]
 dev = [
