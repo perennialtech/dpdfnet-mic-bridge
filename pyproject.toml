@@ -14,8 +14,8 @@ dependencies = [
 dpdfnet-mic-bridge = "dpdfnet_mic_bridge.app:main"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=82.0.1"]
+build-backend = "setuptools.build_meta"
 
 [tool.basedpyright]
 typeCheckingMode = "standard"
