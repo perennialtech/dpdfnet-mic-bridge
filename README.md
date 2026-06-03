@@ -1,11 +1,11 @@
-# Mic bridge
+# mic-bridge
 
 Small command-line DPDFNet microphone bridge for Windows and Linux PipeWire. It reads a real microphone, enhances it in real time, and writes the result to a virtual microphone target.
 
 Typical flow:
 
 ```text
-physical mic -> mic_bridge -> virtual mic endpoint -> Discord/OBS/game
+physical mic -> mic-bridge -> virtual mic endpoint -> Discord/OBS/game
 ```
 
 ## Install
@@ -25,7 +25,7 @@ uv run dpdfnet download dpdfnet8_48khz_hr
 ## Start
 
 ```text
-uv run python mic_bridge.py
+uv run mic-bridge
 ```
 
 Stop with Ctrl+C.
@@ -33,8 +33,8 @@ Stop with Ctrl+C.
 If auto-selection needs help:
 
 ```text
-uv run python mic_bridge.py devices
-uv run python mic_bridge.py --input 15 --output 19
+uv run mic-bridge devices
+uv run mic-bridge --input 15 --output 19
 ```
 
 `devices` marks what auto mode may choose with `auto`; everything else is `pin-only`.
@@ -43,12 +43,12 @@ uv run python mic_bridge.py --input 15 --output 19
 
 ## Windows
 
-Install VB-CABLE yourself first. This tool does not install it.
+Install [VB-CABLE](https://vb-audio.com/Cable/) yourself first. This tool does not install it.
 
 Use:
 
 ```text
-uv run python mic_bridge.py
+uv run mic-bridge
 ```
 
 In apps, choose VB-CABLE's recording endpoint, usually `CABLE Output`, as the microphone. The bridge writes to the playback endpoint, usually `CABLE Input`.
@@ -56,8 +56,8 @@ In apps, choose VB-CABLE's recording endpoint, usually `CABLE Output`, as the mi
 If automatic selection fails:
 
 ```text
-uv run python mic_bridge.py devices
-uv run python mic_bridge.py --input <mic-id> --output <cable-input-id>
+uv run mic-bridge devices
+uv run mic-bridge --input <mic-id> --output <cable-input-id>
 ```
 
 ## Linux PipeWire
@@ -71,7 +71,7 @@ pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dp
 Then run:
 
 ```text
-uv run python mic_bridge.py
+uv run mic-bridge
 ```
 
 In apps, select `DPDFNet_Mic` as the microphone. If the app does not show it, try its matching source/monitor.
@@ -79,8 +79,8 @@ In apps, select `DPDFNet_Mic` as the microphone. If the app does not show it, tr
 If automatic selection fails:
 
 ```text
-uv run python mic_bridge.py devices
-uv run python mic_bridge.py --input <mic-id> --output <dpdfnet-mic-id>
+uv run mic-bridge devices
+uv run mic-bridge --input <mic-id> --output <dpdfnet-mic-id>
 ```
 
 ## Glitches and block size
@@ -90,13 +90,13 @@ If the audio backend reports overflows/underflows, the bridge prints a concrete 
 For JACK/PipeWire-JACK, exact frame counts are usually the clearest knob:
 
 ```text
-uv run python mic_bridge.py --block-frames 2048
+uv run mic-bridge --block-frames 2048
 ```
 
 For other backends, milliseconds are also available:
 
 ```text
-uv run python mic_bridge.py --block-ms 30
+uv run mic-bridge --block-ms 30
 ```
 
 ## Runtime warnings
@@ -106,12 +106,12 @@ The callback records PortAudio status warnings without printing from the real-ti
 ## Commands
 
 ```text
-uv run python mic_bridge.py                         # start bridge
-uv run python mic_bridge.py run                     # same as above
-uv run python mic_bridge.py devices                 # list current devices
-uv run python mic_bridge.py --input 15 --output 19  # pin IDs
-uv run python mic_bridge.py devices --all-apis
-uv run python mic_bridge.py --block-frames 2048     # exact JACK-friendly block size
+uv run mic-bridge                         # start bridge
+uv run mic-bridge run                     # same as above
+uv run mic-bridge devices                 # list current devices
+uv run mic-bridge --input 15 --output 19  # pin IDs
+uv run mic-bridge devices --all-apis
+uv run mic-bridge --block-frames 2048     # exact JACK-friendly block size
 uv run python -m mic_bridge_app
 ```
 
