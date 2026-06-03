@@ -7,6 +7,7 @@ import math
 import platform
 import shlex
 import sys
+import threading
 import time
 from typing import Callable
 
@@ -599,6 +600,7 @@ def _run_command_impl(
     output_fifo = AudioFifo()
     status_counter = CallbackStatusCounter()
     fatal_callback_error: list[BaseException] = []
+    callback_failed = threading.Event()
 
     def audio_callback(indata, outdata, frames, _time_info, status) -> None:
         try:
@@ -622,6 +624,7 @@ def _run_command_impl(
         except Exception as exc:
             if not fatal_callback_error:
                 fatal_callback_error.append(exc)
+            callback_failed.set()
             outdata.fill(0.0)
             raise sd_mod.CallbackAbort from exc
 
@@ -639,12 +642,24 @@ def _run_command_impl(
             dtype="float32",
             latency=config.latency,
             callback=audio_callback,
-        ):
+        ) as stream:
             print("Streaming. Ctrl+C stops.")
             print()
 
             while True:
-                time.sleep(0.5)
+                if callback_failed.is_set():
+                    stream_error = RuntimeError(
+                        "The audio callback aborted unexpectedly."
+                    )
+                    break
+
+                if not stream.active:
+                    stream_error = RuntimeError(
+                        "The audio stream stopped unexpectedly."
+                    )
+                    break
+
+                time.sleep(0.1)
 
     except KeyboardInterrupt:
         interrupted = True
