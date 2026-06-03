@@ -10,7 +10,7 @@ physical mic -> mic-bridge -> virtual mic endpoint -> Discord/OBS/game
 
 ## Install
 
-Install uv, then from this project directory run:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then from this project directory run:
 
 ```text
 uv sync
