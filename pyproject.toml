@@ -2,7 +2,7 @@
 name = "dpdfnet-mic-bridge"
 version = "0.1.0"
 description = "Small command-line DPDFNet microphone bridge"
-readme = "README.md"
+readme = "README"
 requires-python = ">=3.12"
 dependencies = [
     "dpdfnet>=0.5.1",
