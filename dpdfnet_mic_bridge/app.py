@@ -56,13 +56,16 @@ def _normalize_argv(argv: Optional[list[str]]) -> list[str]:
 
 def main(argv: Optional[list[str]] = None) -> int:
     import platform
+
     if platform.system() == "Windows":
         import ctypes
+
         # 0x00000080 is HIGH_PRIORITY_CLASS
         kernel32 = ctypes.windll.kernel32
         kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x00000080)
     elif platform.system() == "Linux":
         import os
+
         try:
             # -10 is high priority. Lower is higher priority.
             os.nice(-10)
