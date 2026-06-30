@@ -5,13 +5,15 @@ from __future__ import annotations
 import platform
 
 from .. import _native_audio as native_audio
+from .stderr import silence_native_stderr
 from .types import AudioInventory
 
 
 def query_audio_inventory() -> AudioInventory:
     """Query native PortAudio once and return a plain-Python inventory snapshot."""
     try:
-        snapshot = native_audio.query_audio_inventory()
+        with silence_native_stderr():
+            snapshot = native_audio.query_audio_inventory()
         devices = [dict(item) for item in snapshot["devices"]]
         hostapi_names = [str(item) for item in snapshot["hostapi_names"]]
     except Exception as exc:

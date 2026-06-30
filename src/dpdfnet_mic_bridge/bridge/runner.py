@@ -10,6 +10,7 @@ import time
 import dpdfnet
 
 from .. import _native_audio
+from ..audio.stderr import silence_native_stderr
 from .config import build_run_config
 from .device_selection import list_devices_handoff
 from .summary import print_block_tuning_next_step, print_run_summary
@@ -144,7 +145,8 @@ def run_bridge(args: argparse.Namespace) -> int:
         config.output_channels,
         config.latency,
     )
-    engine = _native_audio.AudioEngine(engine_config)
+    with silence_native_stderr():
+        engine = _native_audio.AudioEngine(engine_config)
 
     enhancement_worker = EnhancementWorker(
         engine,
@@ -162,7 +164,8 @@ def run_bridge(args: argparse.Namespace) -> int:
     native_stats: dict = {}
 
     try:
-        engine.start()
+        with silence_native_stderr():
+            engine.start()
         engine_started = True
 
         enhancement_worker.start()

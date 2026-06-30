@@ -2,45 +2,15 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from collections.abc import Iterable
-from contextlib import contextmanager
 
 from .. import _native_audio as native_audio
 from .hostapi import hostapi_matches_filter
 from .inventory import hostapi_name_for_device
 from .selection import device_probe_sort_key
+from .stderr import silence_native_stderr
 from .tags import infer_device_tags
 from .types import AudioInventory, DeviceProbe
-
-
-@contextmanager
-def _silence_native_stderr():
-    """
-    Hide noisy native diagnostics during probe calls.
-
-    ALSA/PortAudio can write directly to fd 2 while native check calls try
-    devices that are expected to fail. The Python exception is still captured
-    and shown in the normal UI; the raw native spam is not useful.
-    """
-    try:
-        stderr_fd = sys.stderr.fileno()
-        saved_fd = os.dup(stderr_fd)
-        devnull_fd = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(devnull_fd, stderr_fd)
-    except (AttributeError, OSError, ValueError):
-        yield
-        return
-
-    try:
-        yield
-    finally:
-        try:
-            os.dup2(saved_fd, stderr_fd)
-        finally:
-            os.close(saved_fd)
-            os.close(devnull_fd)
 
 
 def iter_input_channel_candidates(max_channels: int) -> Iterable[int]:
@@ -88,7 +58,7 @@ def probe_device_channels(
     failures: list[str] = []
     for channels in channel_candidates:
         try:
-            with _silence_native_stderr():
+            with silence_native_stderr():
                 check(device_id, channels, samplerate, dtype)
             return channels, tuple()
         except Exception as exc:
@@ -150,7 +120,7 @@ def negotiate_full_duplex_channels(
             int(output_device_info["max_output_channels"])
         ):
             try:
-                with _silence_native_stderr():
+                with silence_native_stderr():
                     native_audio.check_full_duplex_stream_settings(
                         input_device_id,
                         output_device_id,
