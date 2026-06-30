@@ -6,14 +6,15 @@ readme = "README"
 requires-python = ">=3.12"
 dependencies = [
     "dpdfnet>=0.5.1",
-    "numpy>=2.4.6",
+    "numba>=0.65", # dpdfnet pulls librosa which pulls an ancient version of numba by default
+    "numpy>=2.4",
 ]
 
 [project.scripts]
 dpdfnet-mic-bridge = "dpdfnet_mic_bridge.app:main"
 
 [build-system]
-requires = ["maturin>=1.7,<2"]
+requires = ["maturin>=1.14,<2"]
 build-backend = "maturin"
 
 [tool.maturin]

@@ -77,7 +77,7 @@ pub fn query_audio_inventory(py: Python<'_>) -> PyResult<Py<PyDict>> {
         )));
     }
 
-    let hostapi_names = PyList::empty_bound(py);
+    let hostapi_names = PyList::empty(py);
     for hostapi_id in 0..hostapi_count {
         let info_ptr = unsafe { ffi::Pa_GetHostApiInfo(hostapi_id) };
         if info_ptr.is_null() {
@@ -97,7 +97,7 @@ pub fn query_audio_inventory(py: Python<'_>) -> PyResult<Py<PyDict>> {
         )));
     }
 
-    let devices = PyList::empty_bound(py);
+    let devices = PyList::empty(py);
     for device_id in 0..device_count {
         let info_ptr = unsafe { ffi::Pa_GetDeviceInfo(device_id) };
         if info_ptr.is_null() {
@@ -105,7 +105,7 @@ pub fn query_audio_inventory(py: Python<'_>) -> PyResult<Py<PyDict>> {
         }
 
         let info = unsafe { *info_ptr };
-        let item = PyDict::new_bound(py);
+        let item = PyDict::new(py);
 
         item.set_item("id", device_id)?;
         item.set_item("name", ffi::c_string(info.name))?;
@@ -121,7 +121,7 @@ pub fn query_audio_inventory(py: Python<'_>) -> PyResult<Py<PyDict>> {
         devices.append(item)?;
     }
 
-    let out = PyDict::new_bound(py);
+    let out = PyDict::new(py);
     out.set_item("devices", devices)?;
     out.set_item("hostapi_names", hostapi_names)?;
     out.set_item("portaudio_version", ffi::version_text())?;

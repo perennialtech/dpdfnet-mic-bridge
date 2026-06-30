@@ -22,7 +22,7 @@ use crate::stats::{
 const INPUT_RING_BLOCKS: usize = 4;
 const OUTPUT_RING_BLOCKS: usize = 4;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct AudioEngineConfig {
     #[pyo3(get)]
@@ -132,11 +132,11 @@ impl AudioEngine {
     }
 
     fn start(&self, py: Python<'_>) -> PyResult<()> {
-        py.allow_threads(|| self.inner.start())
+        py.detach(|| self.inner.start())
     }
 
     fn stop(&self, py: Python<'_>) -> PyResult<()> {
-        py.allow_threads(|| self.inner.stop())
+        py.detach(|| self.inner.stop())
     }
 
     fn is_active(&self) -> bool {
@@ -148,10 +148,10 @@ impl AudioEngine {
         py: Python<'_>,
         timeout_ms: u64,
     ) -> PyResult<Option<Py<PyArray1<f32>>>> {
-        let result = py.allow_threads(|| self.inner.read_input_vec(timeout_ms));
+        let result = py.detach(|| self.inner.read_input_vec(timeout_ms));
 
         match result {
-            Some(samples) => Ok(Some(PyArray1::from_vec_bound(py, samples).unbind())),
+            Some(samples) => Ok(Some(PyArray1::from_vec(py, samples).unbind())),
             None => Ok(None),
         }
     }
@@ -485,7 +485,7 @@ impl EngineInner {
     }
 
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        let out = PyDict::new_bound(py);
+        let out = PyDict::new(py);
 
         out.set_item(
             "callback_count",
