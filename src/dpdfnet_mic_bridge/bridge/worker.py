@@ -1,54 +1,51 @@
-"""Background DPDFNet enhancement worker."""
+"""Background DPDFNet enhancement worker for the native audio engine."""
 
 from __future__ import annotations
 
-import queue
 import threading
+from typing import Any
 
 import numpy as np
-
-from .callback_state import AudioFifo
 
 
 class EnhancementWorker:
     """
-    Runs DPDFNet away from PortAudio's real-time callback.
+    Pulls complete mono input blocks from the native engine, runs DPDFNet, and
+    pushes enhanced mono samples back to the native engine.
 
-    The callback is allowed to copy one input block, enqueue it without waiting,
-    and drain already-produced output. When the worker falls behind we prefer
-    bounded, audible damage (dropped stale input or zero-filled output) over
-    blocking the real-time thread.
+    The native Rust/PortAudio callback owns all real-time audio I/O and ring
+    buffers. Python never runs in the PortAudio callback. This worker is allowed
+    to block on model inference; when it falls behind the native output callback
+    zero-fills and reports underruns through native stats.
     """
 
     def __init__(
         self,
-        enhancer,
+        engine: Any,
+        enhancer: Any,
         *,
         sample_rate: int,
-        max_queued_blocks: int = 2,
-        max_output_blocks: int = 4,
+        block_size: int,
+        read_timeout_ms: int = 100,
     ) -> None:
+        self._engine = engine
         self._enhancer = enhancer
         self._sample_rate = sample_rate
-        self._input_queue: queue.Queue[np.ndarray | None] = queue.Queue(
-            maxsize=max_queued_blocks
-        )
-        self._output_fifo = AudioFifo()
-        self._output_lock = threading.Lock()
-        self._max_output_frames = 0
-        self._output_started = False
+        self._block_size = block_size
+        self._read_timeout_ms = read_timeout_ms
 
         self._stop = threading.Event()
         self._failed = threading.Event()
         self._failure: BaseException | None = None
         self._thread: threading.Thread | None = None
 
-        self.input_drop_blocks = 0
-        self.output_underrun_blocks = 0
-        self.output_drop_blocks = 0
-        self.output_lock_misses = 0
-
-        self._max_output_blocks = max_output_blocks
+        self.input_blocks = 0
+        self.input_frames = 0
+        self.read_timeouts = 0
+        self.empty_output_blocks = 0
+        self.output_blocks = 0
+        self.output_frames = 0
+        self.output_write_failures = 0
 
     @property
     def failure(self) -> BaseException | None:
@@ -57,6 +54,9 @@ class EnhancementWorker:
         return self._failure
 
     def start(self) -> None:
+        if self._thread is not None:
+            raise RuntimeError("EnhancementWorker.start() called more than once.")
+
         self._thread = threading.Thread(
             target=self._run,
             name="dpdfnet-enhancer",
@@ -70,92 +70,75 @@ class EnhancementWorker:
         if thread is not None:
             thread.join(timeout=2.0)
 
-    def submit_input(self, samples: np.ndarray) -> None:
-        if self._stop.is_set() or self._failed.is_set():
-            return
-
-        chunk = np.array(samples, dtype=np.float32, copy=True).reshape(-1)
-        if chunk.size == 0:
-            return
-
-        if self._max_output_frames == 0:
-            self._max_output_frames = int(chunk.size) * self._max_output_blocks
-
-        try:
-            self._input_queue.put_nowait(chunk)
-            return
-        except queue.Full:
-            pass
-
-        try:
-            self._input_queue.get_nowait()
-            self.input_drop_blocks += 1
-        except queue.Empty:
-            pass
-
-        try:
-            self._input_queue.put_nowait(chunk)
-        except queue.Full:
-            self.input_drop_blocks += 1
-
-    def pop_output(self, frames: int) -> np.ndarray:
-        silence = np.zeros(frames, dtype=np.float32)
-        if frames <= 0:
-            return silence
-
-        if not self._output_lock.acquire(blocking=False):
-            if self._output_started:
-                self.output_lock_misses += 1
-            return silence
-
-        try:
-            available = self._output_fifo.available
-            if available < frames and self._output_started:
-                self.output_underrun_blocks += 1
-            return self._output_fifo.pop(frames)
-        finally:
-            self._output_lock.release()
-
     def warning_lines(self) -> list[str]:
         pairs = (
-            ("worker_input_drops", self.input_drop_blocks),
-            ("worker_output_underruns", self.output_underrun_blocks),
-            ("worker_output_drops", self.output_drop_blocks),
-            ("callback_output_lock_misses", self.output_lock_misses),
+            ("worker_empty_outputs", self.empty_output_blocks),
+            ("worker_output_write_failures", self.output_write_failures),
         )
         return [f"  - {name}: {count}" for name, count in pairs if count]
 
     def _run(self) -> None:
         try:
             while not self._stop.is_set():
-                try:
-                    samples = self._input_queue.get(timeout=0.1)
-                except queue.Empty:
-                    continue
+                samples = self._engine.read_input(self._read_timeout_ms)
 
                 if samples is None:
-                    return
-
-                enhanced = self._enhancer.process(
-                    samples,
-                    sample_rate=self._sample_rate,
-                )
-                enhanced = np.asarray(enhanced, dtype=np.float32).reshape(-1)
-                if enhanced.size == 0:
+                    if self._stop.is_set():
+                        return
+                    if not self._engine.is_active():
+                        return
+                    self.read_timeouts += 1
                     continue
 
-                with self._output_lock:
-                    if (
-                        self._max_output_frames > 0
-                        and self._output_fifo.available + int(enhanced.size)
-                        > self._max_output_frames
-                    ):
-                        self._output_fifo.clear()
-                        self.output_drop_blocks += 1
+                input_block = np.asarray(samples, dtype=np.float32).reshape(-1)
+                if input_block.size == 0:
+                    continue
 
-                    self._output_fifo.push(enhanced)
-                    self._output_started = True
+                self.input_blocks += 1
+                self.input_frames += int(input_block.size)
+
+                enhanced = self._enhancer.process(
+                    input_block,
+                    sample_rate=self._sample_rate,
+                )
+                output_block = np.asarray(enhanced, dtype=np.float32).reshape(-1)
+
+                if output_block.size == 0:
+                    self.empty_output_blocks += 1
+                    continue
+
+                if not output_block.flags.c_contiguous:
+                    output_block = np.ascontiguousarray(output_block)
+
+                self.output_blocks += 1
+                self.output_frames += int(output_block.size)
+                self._write_output(output_block)
 
         except Exception as exc:
-            self._failure = exc
-            self._failed.set()
+            if not self._stop.is_set():
+                self._failure = exc
+                self._failed.set()
+
+    def _write_output(self, samples: np.ndarray) -> None:
+        total = int(samples.size)
+        if total == 0:
+            return
+
+        chunk_size = max(1, self._block_size)
+
+        for start in range(0, total, chunk_size):
+            if self._stop.is_set():
+                return
+
+            end = min(start + chunk_size, total)
+            chunk = samples[start:end]
+            if not chunk.flags.c_contiguous:
+                chunk = np.ascontiguousarray(chunk)
+
+            if self._engine.write_output(chunk):
+                continue
+
+            if self._stop.is_set() or not self._engine.is_active():
+                return
+
+            self.output_write_failures += 1

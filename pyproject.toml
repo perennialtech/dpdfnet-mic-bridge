@@ -1,21 +1,27 @@
 [project]
 name = "dpdfnet-mic-bridge"
 version = "0.1.0"
-description = "Small command-line DPDFNet microphone bridge"
+description = "Small command-line DPDFNet microphone bridge with a native Rust/PortAudio audio engine"
 readme = "README"
 requires-python = ">=3.12"
 dependencies = [
     "dpdfnet>=0.5.1",
     "numpy>=2.4.6",
-    "sounddevice>=0.5.5",
 ]
 
 [project.scripts]
 dpdfnet-mic-bridge = "dpdfnet_mic_bridge.app:main"
 
 [build-system]
-requires = ["setuptools>=82.0.1"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+manifest-path = "rust/native_audio/Cargo.toml"
+bindings = "pyo3"
+module-name = "dpdfnet_mic_bridge._native_audio"
+python-source = "src"
+features = ["pyo3/extension-module"]
 
 [tool.basedpyright]
 typeCheckingMode = "standard"

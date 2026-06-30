@@ -1,0 +1,21 @@
+[package]
+name = "dpdfnet-mic-bridge-native-audio"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "_native_audio"
+crate-type = ["cdylib"]
+
+[dependencies]
+numpy = "0.22"
+pyo3 = { version = "0.22", features = ["extension-module"] }
+
+[build-dependencies]
+pkg-config = "0.3"
+vcpkg = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = true

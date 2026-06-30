@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+rust/native_audio/target
+
+*.so

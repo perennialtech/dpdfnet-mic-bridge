@@ -8,7 +8,8 @@ import shlex
 import sys
 
 from ..audio.hostapi import (HOSTAPI_FILTER_DISPLAY_NAMES,
-                             hostapi_filter_key_for_name)
+                             hostapi_filter_key_for_name,
+                             resolve_list_hostapi_filter)
 from ..audio.inventory import query_audio_inventory
 from ..audio.probing import build_device_probes
 from ..audio.selection import (is_likely_virtual_bridge_output,
@@ -162,22 +163,7 @@ def devices_command(args: argparse.Namespace) -> int:
         )
 
     inventory = query_audio_inventory()
-    hostapi_filter = HOSTAPI_FILTER_DISPLAY_NAMES[
-        resolve_hostapi := __import__(
-            "dpdfnet_mic_bridge.audio.hostapi",
-            fromlist=["resolve_list_hostapi_filter"],
-        ).resolve_list_hostapi_filter(
-            args.hostapi,
-            args.all_apis,
-            inventory.hostapi_names,
-        )
-    ]
-    del hostapi_filter
-
-    hostapi_filter = __import__(
-        "dpdfnet_mic_bridge.audio.hostapi",
-        fromlist=["resolve_list_hostapi_filter"],
-    ).resolve_list_hostapi_filter(
+    hostapi_filter = resolve_list_hostapi_filter(
         args.hostapi,
         args.all_apis,
         inventory.hostapi_names,
@@ -223,14 +209,14 @@ def devices_command(args: argparse.Namespace) -> int:
         print()
 
     if hostapi_filter == "all" and not input_probes and not output_probes:
-        print("No PortAudio devices are currently visible.")
+        print("No native PortAudio devices are currently visible.")
         if platform.system() == "Windows":
             print(
                 "Check Windows sound settings and confirm VB-CABLE is installed if you need it."
             )
         elif platform.system() == "Linux":
             print(
-                "Check that your audio session is running and PortAudio can see PipeWire/Pulse/JACK/ALSA."
+                "Check that your audio session is running and native PortAudio can see PipeWire/Pulse/JACK/ALSA."
             )
         print()
 

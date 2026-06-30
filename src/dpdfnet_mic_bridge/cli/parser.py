@@ -114,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         choices=("low", "high"),
         default=DEFAULT_LATENCY,
-        help=f"sounddevice latency hint (default: {DEFAULT_LATENCY})",
+        help=f"native PortAudio latency hint (default: {DEFAULT_LATENCY})",
     )
     run_parser.add_argument(
         "--verbose",

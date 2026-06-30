@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "dpdfnet-mic-bridge-native-audio"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "dpdfnet_mic_bridge._native_audio"
+features = ["pyo3/extension-module"]

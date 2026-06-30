@@ -1,4 +1,4 @@
-"""PortAudio device probing and channel negotiation."""
+"""PortAudio device probing and channel negotiation through native Rust."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sys
 from collections.abc import Iterable
 from contextlib import contextmanager
 
-from ..dependencies import require_sounddevice
+from ..dependencies import require_native_audio
 from .hostapi import hostapi_matches_filter
 from .inventory import hostapi_name_for_device
 from .selection import device_probe_sort_key
@@ -20,7 +20,7 @@ def _silence_native_stderr():
     """
     Hide noisy native diagnostics during probe calls.
 
-    ALSA/PortAudio can write directly to fd 2 while `check_*_settings()` tries
+    ALSA/PortAudio can write directly to fd 2 while native check calls try
     devices that are expected to fail. The Python exception is still captured
     and shown in the normal UI; the raw native spam is not useful.
     """
@@ -69,16 +69,16 @@ def probe_device_channels(
     device_info: dict,
     dtype: str = "float32",
 ) -> tuple[int | None, tuple[str, ...]]:
-    sd_mod = require_sounddevice()
+    native_audio = require_native_audio()
     info = dict(device_info)
 
     if direction == "input":
         max_channels = int(info["max_input_channels"])
-        check = sd_mod.check_input_settings
+        check = native_audio.check_input_settings
         channel_candidates = iter_input_channel_candidates(max_channels)
     elif direction == "output":
         max_channels = int(info["max_output_channels"])
-        check = sd_mod.check_output_settings
+        check = native_audio.check_output_settings
         channel_candidates = iter_output_channel_candidates(max_channels)
     else:
         raise ValueError(f"Unsupported direction '{direction}'")
@@ -90,12 +90,7 @@ def probe_device_channels(
     for channels in channel_candidates:
         try:
             with _silence_native_stderr():
-                check(
-                    device=device_id,
-                    channels=channels,
-                    samplerate=samplerate,
-                    dtype=dtype,
-                )
+                check(device_id, channels, samplerate, dtype)
             return channels, tuple()
         except Exception as exc:
             failures.append(f"{channels}ch -> {exc}")
@@ -111,7 +106,7 @@ def negotiate_stream_channels(
     device_info: dict,
     dtype: str = "float32",
 ) -> int:
-    """Pick an input/output channel count the device can open."""
+    """Pick an input/output channel count the native engine can open."""
     channels, failures = probe_device_channels(
         device_id=device_id,
         direction=direction,
@@ -144,7 +139,9 @@ def build_device_probes(
         ("output", "max_output_channels", output_probes),
     )
 
-    for device_id, info in enumerate(inventory.devices):
+    for position, raw_info in enumerate(inventory.devices):
+        info = dict(raw_info)
+        device_id = int(info.get("id", position))
         hostapi_name = hostapi_name_for_device(info, inventory.hostapi_names)
 
         if not hostapi_matches_filter(hostapi_name, hostapi_filter):

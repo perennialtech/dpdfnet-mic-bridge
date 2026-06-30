@@ -16,8 +16,16 @@ def _require(package_name: str):
         ) from exc
 
 
-def require_sounddevice():
-    return _require("sounddevice")
+def require_native_audio():
+    try:
+        return importlib.import_module("dpdfnet_mic_bridge._native_audio")
+    except ImportError as exc:
+        raise RuntimeError(
+            "The native Rust/PortAudio audio engine is not installed or could not be loaded.\n"
+            "Install Rust and PortAudio development files, then rebuild with:\n"
+            "  uv sync\n"
+            "On Linux this usually requires pkg-config and portaudio development headers."
+        ) from exc
 
 
 def require_dpdfnet():

@@ -5,7 +5,11 @@ dpdfnet-mic-bridge takes your real microphone, runs DPDFNet enhancement on it,
 then sends the cleaned audio into a virtual microphone that apps like
 Discord, OBS, or games can use.
 
-    physical mic -> dpdfnet-mic-bridge -> virtual mic -> Discord/OBS/game
+    physical mic -> native Rust/PortAudio engine -> Python DPDFNet worker -> native Rust/PortAudio engine -> virtual mic -> Discord/OBS/game
+
+The real-time audio engine is native Rust using PortAudio. Python is only the
+control, device-selection, CLI, and DPDFNet model layer. There is no sounddevice
+runtime dependency and no Python PortAudio callback.
 
 DPDFNet:
     https://github.com/ceva-ip/DPDFNet
@@ -18,11 +22,42 @@ Install uv first:
 
     https://docs.astral.sh/uv/getting-started/installation/
 
+
+INSTALL NATIVE BUILD PREREQUISITES
+==================================
+
+uv sync builds the Rust extension with maturin, so you need a Rust toolchain and
+PortAudio development files before installing this project.
+
+Rust:
+
+    https://rustup.rs/
+
+Linux examples:
+
+    sudo apt install pkg-config portaudio19-dev
+
+or on Fedora-like systems:
+
+    sudo dnf install pkgconf-pkg-config portaudio-devel
+
+Windows notes:
+
+    Install the Visual Studio C++ build tools and a Rust MSVC toolchain.
+    Install PortAudio with vcpkg or provide a PortAudio library yourself.
+    If needed, set:
+
+        PORTAUDIO_LIB_DIR=<directory containing the PortAudio library>
+        PORTAUDIO_LIB_NAME=<library name without platform prefix/suffix>
+
 Then open a terminal in the dpdfnet-mic-bridge project folder and run:
 
     uv sync
 
-This installs the project dependencies.
+This installs Python dependencies and compiles/installs the native Rust
+PortAudio extension as:
+
+    dpdfnet_mic_bridge._native_audio
 
 
 SET UP YOUR VIRTUAL MICROPHONE
@@ -105,7 +140,7 @@ List devices:
 
     uv run dpdfnet-mic-bridge devices
 
-This shows device names and IDs.
+This shows native PortAudio device names and IDs.
 
 Then run with a specific input and output:
 
