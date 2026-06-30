@@ -7,7 +7,9 @@ import platform
 import sys
 import time
 
-from ..models.enhancer import build_stream_enhancer
+import dpdfnet
+
+from .. import _native_audio
 from .config import build_run_config
 from .device_selection import list_devices_handoff
 from .summary import print_block_tuning_next_step, print_run_summary
@@ -82,12 +84,7 @@ def _native_stats_warning_lines(stats: dict) -> list[str]:
     return lines
 
 
-def run_bridge(
-    args: argparse.Namespace,
-    *,
-    native_audio_mod,
-    dpdfnet_mod,
-) -> int:
+def run_bridge(args: argparse.Namespace) -> int:
     if platform.system() not in ("Windows", "Linux"):
         _eprint(
             "[note] This script is primarily intended for Windows 10/11 and Linux PipeWire systems. It may still work elsewhere, but that is not the supported target."
@@ -98,11 +95,18 @@ def run_bridge(
 
     print("Loading model...")
     model_start = time.perf_counter()
-    enhancer = build_stream_enhancer(
-        dpdfnet_mod,
-        model_name=config.model_name,
-        verbose=bool(args.verbose),
-    )
+    try:
+        enhancer = dpdfnet.StreamEnhancer(
+            model=config.model_name, verbose=bool(args.verbose)
+        )
+    except Exception as exc:
+        detail = _first_line(str(exc)) or type(exc).__name__
+        raise RuntimeError(
+            f"Could not load DPDFNet model '{config.model_name}'.\n"
+            "If the model has not been downloaded yet, run:\n"
+            f"  dpdfnet download {config.model_name}\n"
+            f"Details: {detail}"
+        ) from exc
     model_elapsed = time.perf_counter() - model_start
     print(f"Model ready ({model_elapsed:.2f}s).")
 
@@ -131,7 +135,7 @@ def run_bridge(
         f"rtf={float(capacity['rtf']):.2f}"
     )
 
-    engine_config = native_audio_mod.AudioEngineConfig(
+    engine_config = _native_audio.AudioEngineConfig(
         config.sample_rate,
         config.block_size,
         config.input_device_id,
@@ -140,7 +144,7 @@ def run_bridge(
         config.output_channels,
         config.latency,
     )
-    engine = native_audio_mod.AudioEngine(engine_config)
+    engine = _native_audio.AudioEngine(engine_config)
 
     enhancement_worker = EnhancementWorker(
         engine,
