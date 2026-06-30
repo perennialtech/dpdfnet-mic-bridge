@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import platform
 
-from ..dependencies import require_native_audio
+from .. import _native_audio as native_audio
 from .types import AudioInventory
 
 
 def query_audio_inventory() -> AudioInventory:
     """Query native PortAudio once and return a plain-Python inventory snapshot."""
-    native_audio = require_native_audio()
-
     try:
         snapshot = native_audio.query_audio_inventory()
         devices = [dict(item) for item in snapshot["devices"]]

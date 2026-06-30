@@ -7,7 +7,7 @@ import sys
 from collections.abc import Iterable
 from contextlib import contextmanager
 
-from ..dependencies import require_native_audio
+from .. import _native_audio as native_audio
 from .hostapi import hostapi_matches_filter
 from .inventory import hostapi_name_for_device
 from .selection import device_probe_sort_key
@@ -69,7 +69,6 @@ def probe_device_channels(
     device_info: dict,
     dtype: str = "float32",
 ) -> tuple[int | None, tuple[str, ...]]:
-    native_audio = require_native_audio()
     info = dict(device_info)
 
     if direction == "input":
@@ -143,8 +142,6 @@ def negotiate_full_duplex_channels(
     device pair, channel counts, sample rate, block size, latency mode, dtype,
     and PortAudio stream flags are all validated together.
     """
-    native_audio = require_native_audio()
-
     input_failures: list[str] = []
     for input_channels in iter_input_channel_candidates(
         int(input_device_info["max_input_channels"])
