@@ -42,7 +42,14 @@ def query_audio_inventory() -> AudioInventory:
             f"Could not query audio devices.\n{guidance}\nDetails: {detail}"
         ) from exc
 
-    return AudioInventory(devices=devices, hostapi_names=hostapi_names)
+    inventory = AudioInventory(devices=devices, hostapi_names=hostapi_names)
+
+    from .identity import stable_device_key
+
+    for item in inventory.devices:
+        item["stable_id"] = stable_device_key(inventory, dict(item))
+
+    return inventory
 
 
 def device_info_from_inventory(inventory: AudioInventory, device_id: int) -> dict:

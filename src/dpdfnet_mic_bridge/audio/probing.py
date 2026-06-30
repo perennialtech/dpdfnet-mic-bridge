@@ -125,6 +125,60 @@ def negotiate_stream_channels(
     )
 
 
+def negotiate_full_duplex_channels(
+    *,
+    input_device_id: int,
+    output_device_id: int,
+    samplerate: int,
+    block_size: int,
+    latency: str,
+    input_device_info: dict,
+    output_device_info: dict,
+    dtype: str = "float32",
+) -> tuple[int, int]:
+    """
+    Pick channel counts by opening the exact full-duplex stream configuration.
+
+    This replaces independent input/output probing for the actual run path:
+    device pair, channel counts, sample rate, block size, latency mode, dtype,
+    and PortAudio stream flags are all validated together.
+    """
+    native_audio = require_native_audio()
+
+    input_failures: list[str] = []
+    for input_channels in iter_input_channel_candidates(
+        int(input_device_info["max_input_channels"])
+    ):
+        for output_channels in iter_output_channel_candidates(
+            int(output_device_info["max_output_channels"])
+        ):
+            try:
+                with _silence_native_stderr():
+                    native_audio.check_full_duplex_stream_settings(
+                        input_device_id,
+                        output_device_id,
+                        input_channels,
+                        output_channels,
+                        samplerate,
+                        block_size,
+                        latency,
+                        dtype,
+                    )
+                return input_channels, output_channels
+            except Exception as exc:
+                input_failures.append(
+                    f"{input_channels}ch in / {output_channels}ch out -> {exc}"
+                )
+
+    failure_text = "\n".join(f"  - {line}" for line in input_failures)
+    raise RuntimeError(
+        "Could not open the exact full-duplex stream configuration.\n"
+        f"input_device={input_device_id}, output_device={output_device_id}, "
+        f"samplerate={samplerate}, block_size={block_size}, latency={latency}, dtype={dtype}\n"
+        f"Tried channel pairs:\n{failure_text}"
+    )
+
+
 def build_device_probes(
     *,
     inventory: AudioInventory,

@@ -1,18 +1,18 @@
-"""Audio callback block-size policy."""
+"""Automatic audio callback block-size policy."""
 
 from __future__ import annotations
 
 import math
 import platform
+import shutil
+import subprocess
+from collections.abc import Iterator
 
 from .hostapi import hostapi_filter_key_for_name
 
-DEFAULT_BLOCK_MS = 10.0
-
-# On Linux/JACK, Python + PortAudio tends to behave more reliably when given a
-# somewhat roomier exact block size instead of raw 10.0 ms.
-LINUX_JACK_AUTO_MIN_BLOCK_MS = 20.0
-LINUX_JACK_AUTO_MIN_BLOCK_FRAMES = 512
+INITIAL_BLOCK_MS = 20.0
+MAX_AUTO_BLOCK_MS = 100.0
+AUTO_GROWTH_MS = 10.0
 
 
 def next_power_of_two(value: int) -> int:
@@ -21,68 +21,87 @@ def next_power_of_two(value: int) -> int:
     return 1 << (value - 1).bit_length()
 
 
-def jack_block_ms_for_frames(frames: int, sample_rate: int) -> float:
+def block_ms_for_frames(frames: int, sample_rate: int) -> float:
     return (float(frames) * 1000.0) / float(sample_rate)
 
 
-def recommended_linux_jack_block_frames(sample_rate: int) -> int:
-    """Return a conservative exact block size for Linux/JACK auto mode."""
-    target_frames = max(
-        int(math.ceil(sample_rate * (LINUX_JACK_AUTO_MIN_BLOCK_MS / 1000.0))),
-        LINUX_JACK_AUTO_MIN_BLOCK_FRAMES,
-    )
-    return next_power_of_two(target_frames)
+def frames_for_ms(ms: float, sample_rate: int) -> int:
+    return max(1, int(round(sample_rate * (ms / 1000.0))))
 
 
-def resolve_effective_block_size(
+def jack_period_frames() -> int | None:
+    """
+    Return the running JACK graph period size when jack_bufsize is available.
+
+    JACK users should run the bridge at an integer multiple of the actual graph
+    period. Guessing a power-of-two period is explicitly avoided here.
+    """
+    command = shutil.which("jack_bufsize")
+    if command is None:
+        return None
+
+    try:
+        completed = subprocess.run(
+            [command],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    text = completed.stdout.strip().splitlines()
+    if not text:
+        return None
+
+    try:
+        value = int(text[-1].strip())
+    except ValueError:
+        return None
+
+    return value if value > 0 else None
+
+
+def iter_auto_block_sizes(
     *,
     sample_rate: int,
-    requested_block_ms: float | None,
-    requested_block_frames: int | None,
     hostapi_name: str,
     system: str | None = None,
-) -> tuple[int, float, str]:
+) -> Iterator[tuple[int, float, str]]:
     """
-    Resolve the stream block size to an exact frame count.
+    Yield automatic block-size candidates.
 
-    Returns:
-        (block_size_frames, effective_block_ms, policy_name)
-
-    Policy names:
-    - explicit
-    - explicit-frames
-    - default-10ms
-    - auto-linux-jack
+    Policy:
+    - start at 20 ms;
+    - grow in bounded increments when exact stream probing fails;
+    - never accept user-provided block sizes;
+    - for JACK, use an integer multiple of the actual graph period.
     """
     current_system = platform.system() if system is None else system
-
-    if requested_block_ms is not None and requested_block_frames is not None:
-        raise ValueError("Use either --block-ms or --block-frames, not both.")
-
-    if requested_block_frames is not None:
-        if requested_block_frames <= 0:
-            raise ValueError("--block-frames must be > 0.")
-        block_size = int(requested_block_frames)
-        effective_ms = jack_block_ms_for_frames(block_size, sample_rate)
-        return block_size, effective_ms, "explicit-frames"
-
-    if requested_block_ms is not None:
-        if requested_block_ms <= 0:
-            raise ValueError("--block-ms must be > 0.")
-        block_size = int(round(sample_rate * (requested_block_ms / 1000.0)))
-        if block_size <= 0:
-            raise ValueError(
-                f"--block-ms={requested_block_ms} produced invalid block_size={block_size}."
-            )
-        effective_ms = jack_block_ms_for_frames(block_size, sample_rate)
-        return block_size, effective_ms, "explicit"
-
     hostapi_key = hostapi_filter_key_for_name(hostapi_name)
-    if current_system == "Linux" and hostapi_key == "jack":
-        block_size = recommended_linux_jack_block_frames(sample_rate)
-        effective_ms = jack_block_ms_for_frames(block_size, sample_rate)
-        return block_size, effective_ms, "auto-linux-jack"
 
-    block_size = int(round(sample_rate * (DEFAULT_BLOCK_MS / 1000.0)))
-    effective_ms = jack_block_ms_for_frames(block_size, sample_rate)
-    return block_size, effective_ms, "default-10ms"
+    if current_system == "Linux" and hostapi_key == "jack":
+        period = jack_period_frames()
+        if period is None:
+            raise ValueError(
+                "JACK block-size validation requires `jack_bufsize`, but it was not available. "
+                "Install JACK tools or use a non-JACK PortAudio host API."
+            )
+
+        minimum_frames = frames_for_ms(INITIAL_BLOCK_MS, sample_rate)
+        maximum_frames = frames_for_ms(MAX_AUTO_BLOCK_MS, sample_rate)
+        multiplier = max(1, math.ceil(minimum_frames / period))
+
+        while multiplier * period <= maximum_frames:
+            frames = multiplier * period
+            yield frames, block_ms_for_frames(frames, sample_rate), "auto-jack-period"
+            multiplier += 1
+
+        return
+
+    block_ms = INITIAL_BLOCK_MS
+    while block_ms <= MAX_AUTO_BLOCK_MS + 1e-9:
+        frames = frames_for_ms(block_ms, sample_rate)
+        yield frames, block_ms_for_frames(frames, sample_rate), "auto-20ms-grow"
+        block_ms += AUTO_GROWTH_MS

@@ -10,8 +10,6 @@ class RunConfig:
     model_name: str
     sample_rate: int
     block_ms: float
-    requested_block_ms: float | None
-    requested_block_frames: int | None
     block_policy: str
     block_size: int
     input_device_id: int

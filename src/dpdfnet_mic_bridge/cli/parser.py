@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 
 from ..audio.hostapi import LIST_DEVICE_HOSTAPI_CHOICES
-from ..audio.virtual_mic import linux_virtual_mic_command
+from ..audio.virtual_mic import (linux_pipewire_virtual_mic_command,
+                                 linux_virtual_mic_command)
 from ..bridge.config import DEFAULT_LATENCY
 from ..models.registry import DEFAULT_MODEL, MODEL_SAMPLE_RATES
 
@@ -22,7 +23,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=(
-            "Linux reusable target:\n"
+            "Linux PipeWire-native reusable target:\n"
+            f"  {linux_pipewire_virtual_mic_command()}\n\n"
+            "Pulse-compatible fallback:\n"
             f"  {linux_virtual_mic_command()}\n\n"
             "No live resampling; the model chooses the sample rate."
         ),
@@ -90,23 +93,6 @@ def build_parser() -> argparse.ArgumentParser:
         choices=sorted(MODEL_SAMPLE_RATES),
         default=DEFAULT_MODEL,
         help=f"DPDFNet model to use (default: {DEFAULT_MODEL})",
-    )
-
-    block_group = run_parser.add_mutually_exclusive_group()
-    block_group.add_argument(
-        "--block-ms",
-        type=float,
-        default=None,
-        help=(
-            "callback block size in milliseconds\n"
-            "default: 10 ms, except Linux/JACK uses a JACK-friendly exact size"
-        ),
-    )
-    block_group.add_argument(
-        "--block-frames",
-        type=int,
-        default=None,
-        help="exact callback block size in frames; useful for JACK/PipeWire-JACK",
     )
 
     run_parser.add_argument(

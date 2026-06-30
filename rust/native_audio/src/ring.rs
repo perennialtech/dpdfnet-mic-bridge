@@ -38,6 +38,28 @@ impl SpscSampleRing {
         self.capacity - self.available()
     }
 
+    /// Discard the oldest queued frames.
+    ///
+    /// This must only be called by the consumer side of the SPSC queue. That
+    /// preserves the ring's ownership model while allowing latency recovery by
+    /// dropping stale audio in favor of newer audio.
+    pub(crate) fn discard_oldest(&self, requested: usize) -> usize {
+        if requested == 0 {
+            return 0;
+        }
+
+        let read = self.read.load(Ordering::Relaxed);
+        let write = self.write.load(Ordering::Acquire);
+        let available = write.wrapping_sub(read);
+        let count = requested.min(available);
+
+        if count > 0 {
+            self.read.store(read.wrapping_add(count), Ordering::Release);
+        }
+
+        count
+    }
+
     pub(crate) fn push_slice(&self, input: &[f32]) -> bool {
         let count = input.len();
         if count == 0 {

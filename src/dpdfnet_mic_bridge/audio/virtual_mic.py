@@ -8,8 +8,24 @@ LINUX_REUSABLE_VIRTUAL_MIC_SINK_NAME = "dpdfnet_mic"
 LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION = "DPDFNet_Mic"
 
 
+def linux_pipewire_virtual_mic_command_args() -> tuple[str, ...]:
+    """Return the preferred PipeWire-native virtual source creation command."""
+    return (
+        "pw-cli",
+        "create-node",
+        "adapter",
+        "{ "
+        "factory.name=support.null-audio-sink "
+        f"node.name={LINUX_REUSABLE_VIRTUAL_MIC_SINK_NAME} "
+        f'node.description="{LINUX_REUSABLE_VIRTUAL_MIC_DESCRIPTION}" '
+        "media.class=Audio/Source/Virtual "
+        "audio.position=[ MONO ] "
+        "}",
+    )
+
+
 def linux_virtual_mic_command_args() -> tuple[str, ...]:
-    """Return the recommended `pactl load-module ...` command as argv."""
+    """Return the Pulse-compatible fallback command."""
     return (
         "pactl",
         "load-module",
@@ -22,6 +38,10 @@ def linux_virtual_mic_command_args() -> tuple[str, ...]:
     )
 
 
+def linux_pipewire_virtual_mic_command() -> str:
+    return shlex.join(linux_pipewire_virtual_mic_command_args())
+
+
 def linux_virtual_mic_command() -> str:
-    """Return the same recommended Linux virtual-mic command as display text."""
+    """Return the fallback Linux virtual-mic command as display text."""
     return shlex.join(linux_virtual_mic_command_args())

@@ -1,0 +1,55 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    name: Linux build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config portaudio19-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build extension and package
+        run: uv sync --frozen
+
+      - name: Import native extension
+        run: uv run python -c "import dpdfnet_mic_bridge._native_audio as n; print(n.query_audio_inventory()['portaudio_version'])"
+
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install PortAudio with vcpkg
+        shell: pwsh
+        run: |
+          vcpkg install portaudio:x64-windows
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+
+      - name: Build extension and package
+        run: uv sync --frozen
+
+      - name: Import native extension
+        run: uv run python -c "import dpdfnet_mic_bridge._native_audio as n; print(n.query_audio_inventory()['portaudio_version'])"

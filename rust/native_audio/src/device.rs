@@ -1,3 +1,4 @@
+use std::os::raw::c_ulong;
 use std::ptr;
 
 use pyo3::prelude::*;
@@ -160,6 +161,114 @@ pub fn check_output_settings(
         dtype,
         StreamDirection::Output,
     )
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    input_device_id,
+    output_device_id,
+    input_channels,
+    output_channels,
+    samplerate,
+    block_size,
+    latency = "high",
+    dtype = "float32"
+))]
+pub fn check_full_duplex_stream_settings(
+    input_device_id: i32,
+    output_device_id: i32,
+    input_channels: i32,
+    output_channels: i32,
+    samplerate: i32,
+    block_size: i32,
+    latency: &str,
+    dtype: &str,
+) -> PyResult<()> {
+    let _runtime = PortAudioRuntime::acquire()?;
+
+    if dtype != "float32" {
+        return Err(runtime_error(format!(
+            "Unsupported dtype '{dtype}'; only float32 is supported by the native audio engine."
+        )));
+    }
+
+    if samplerate <= 0 {
+        return Err(runtime_error(format!(
+            "Invalid sample rate {samplerate}; sample rate must be > 0."
+        )));
+    }
+
+    if block_size <= 0 {
+        return Err(runtime_error(format!(
+            "Invalid block size {block_size}; block size must be > 0."
+        )));
+    }
+
+    let low_latency = match latency {
+        "low" => true,
+        "high" => false,
+        _ => {
+            return Err(runtime_error(format!(
+                "Invalid latency '{latency}'; expected 'low' or 'high'."
+            )))
+        }
+    };
+
+    let input_params = build_stream_parameters(
+        input_device_id,
+        input_channels,
+        StreamDirection::Input,
+        low_latency,
+    )?;
+    let output_params = build_stream_parameters(
+        output_device_id,
+        output_channels,
+        StreamDirection::Output,
+        low_latency,
+    )?;
+
+    let format_error = unsafe {
+        ffi::Pa_IsFormatSupported(&input_params, &output_params, samplerate as f64)
+    };
+    if format_error != ffi::PA_NO_ERROR {
+        return Err(runtime_error(format!(
+            "PortAudio rejected full-duplex format: input_device={input_device_id}, output_device={output_device_id}, input_channels={input_channels}, output_channels={output_channels}, samplerate={samplerate}, block_size={block_size}, latency={latency}, dtype={dtype}: {}",
+            ffi::error_text(format_error)
+        )));
+    }
+
+    let mut raw_stream: *mut ffi::PaStream = ptr::null_mut();
+    let open_error = unsafe {
+        ffi::Pa_OpenStream(
+            &mut raw_stream,
+            &input_params,
+            &output_params,
+            samplerate as f64,
+            block_size as c_ulong,
+            ffi::PA_CLIP_OFF | ffi::PA_DITHER_OFF,
+            None,
+            ptr::null_mut(),
+        )
+    };
+
+    if open_error != ffi::PA_NO_ERROR {
+        return Err(runtime_error(format!(
+            "PortAudio rejected exact full-duplex stream: input_device={input_device_id}, output_device={output_device_id}, input_channels={input_channels}, output_channels={output_channels}, samplerate={samplerate}, block_size={block_size}, latency={latency}, dtype={dtype}: {}",
+            ffi::error_text(open_error)
+        )));
+    }
+
+    if !raw_stream.is_null() {
+        let close_error = unsafe { ffi::Pa_CloseStream(raw_stream) };
+        if close_error != ffi::PA_NO_ERROR {
+            return Err(runtime_error(format!(
+                "PortAudio opened but could not close exact full-duplex probe stream: {}",
+                ffi::error_text(close_error)
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn check_settings(

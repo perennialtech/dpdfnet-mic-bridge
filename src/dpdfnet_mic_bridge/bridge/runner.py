@@ -11,7 +11,7 @@ from ..models.enhancer import build_stream_enhancer
 from .config import build_run_config
 from .device_selection import list_devices_handoff
 from .summary import print_block_tuning_next_step, print_run_summary
-from .worker import EnhancementWorker
+from .worker import EnhancementWorker, measure_model_realtime_capacity
 
 
 def _eprint(*args: object) -> None:
@@ -52,6 +52,10 @@ def _native_stats_warning_lines(stats: dict) -> list[str]:
         ("output_ring_dropped_frames", "native_output_ring_dropped_frames"),
         ("output_underrun_blocks", "native_output_underrun_blocks"),
         ("output_underrun_frames", "native_output_underrun_frames"),
+        ("input_stale_dropped_blocks", "native_input_stale_dropped_blocks"),
+        ("input_stale_dropped_frames", "native_input_stale_dropped_frames"),
+        ("output_stale_dropped_blocks", "native_output_stale_dropped_blocks"),
+        ("output_stale_dropped_frames", "native_output_stale_dropped_frames"),
         ("portaudio_input_underflow", "portaudio_input_underflow"),
         ("portaudio_input_overflow", "portaudio_input_overflow"),
         ("portaudio_output_underflow", "portaudio_output_underflow"),
@@ -102,6 +106,31 @@ def run_bridge(
     model_elapsed = time.perf_counter() - model_start
     print(f"Model ready ({model_elapsed:.2f}s).")
 
+    capacity = measure_model_realtime_capacity(
+        enhancer,
+        sample_rate=config.sample_rate,
+        block_size=config.block_size,
+        jitter_blocks=2,
+    )
+    if not bool(capacity["ok"]):
+        raise RuntimeError(
+            "DPDFNet inference is too slow for this route.\n"
+            f"Average: {float(capacity['avg_seconds']) * 1000.0:.2f} ms, "
+            f"max: {float(capacity['max_seconds']) * 1000.0:.2f} ms, "
+            f"block deadline: {float(capacity['block_seconds']) * 1000.0:.2f} ms, "
+            f"jitter budget: {float(capacity['budget_seconds']) * 1000.0:.2f} ms, "
+            f"RTF: {float(capacity['rtf']):.2f}, "
+            f"deadline misses: {int(capacity['deadline_misses'])}.\n"
+            "Use a faster model, a faster CPU/GPU path, or reduce other system load."
+        )
+
+    print(
+        "Model timing "
+        f"avg={float(capacity['avg_seconds']) * 1000.0:.2f}ms "
+        f"max={float(capacity['max_seconds']) * 1000.0:.2f}ms "
+        f"rtf={float(capacity['rtf']):.2f}"
+    )
+
     engine_config = native_audio_mod.AudioEngineConfig(
         config.sample_rate,
         config.block_size,
@@ -138,6 +167,8 @@ def run_bridge(
         print("Streaming. Ctrl+C stops.")
         print()
 
+        next_metrics_print = 0.0
+
         while True:
             worker_failure = enhancement_worker.failure
             if worker_failure is not None:
@@ -165,6 +196,11 @@ def run_bridge(
                 enhancement_worker.stop()
                 break
 
+            now = time.perf_counter()
+            if now >= next_metrics_print:
+                print("\r" + enhancement_worker.metrics_line(), end="", flush=True)
+                next_metrics_print = now + 0.25
+
             time.sleep(0.1)
 
     except KeyboardInterrupt:
@@ -172,6 +208,10 @@ def run_bridge(
     except Exception as exc:
         stream_error = exc
     finally:
+        worker_stopped = True
+        if worker_started:
+            worker_stopped = enhancement_worker.stop(timeout=2.0)
+
         if engine_started:
             try:
                 engine.stop()
@@ -179,14 +219,18 @@ def run_bridge(
                 if stream_error is None and not interrupted:
                     stream_error = exc
 
-        if worker_started:
-            enhancement_worker.stop()
-
         try:
             native_stats = dict(engine.stats())
         except Exception:
             native_stats = {}
 
+        if not worker_stopped and stream_error is None and not interrupted:
+            stream_error = RuntimeError(
+                "The enhancement worker did not stop within 2 seconds. "
+                "Inference is stuck; the worker thread is daemonized so process exit is the hard termination boundary."
+            )
+
+    print()
     if interrupted:
         print()
         print("Stopping...")

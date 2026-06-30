@@ -11,6 +11,26 @@ The real-time audio engine is native Rust using PortAudio. Python is only the
 control, device-selection, CLI, and DPDFNet model layer. There is no sounddevice
 runtime dependency and no Python PortAudio callback.
 
+Audio policy:
+    The bridge processes internally as mono. Multichannel microphone input is
+    downmixed to mono before DPDFNet, and the enhanced mono signal is copied to
+    every selected output channel. Stereo preservation, beamforming, per-channel
+    selection, automatic gain control, and limiter policy before writing to the
+    virtual microphone are intentionally out of scope.
+
+Block-size policy:
+    User block-size flags are intentionally not exposed. The bridge starts with
+    an automatic 20 ms callback size and grows up to a bounded limit only when
+    exact full-duplex stream validation requires it. On JACK, the block size is
+    validated against the actual JACK graph period rather than guessed.
+
+Runtime policy:
+    The native callback owns audio I/O and uses explicit queue-depth tracking.
+    The Python worker uses reusable buffers, primes a target playout latency,
+    reports DPDFNet processing time on one terminal line, sanitizes NaN/Inf and
+    clipped input before inference, and refuses startup when measured inference
+    time cannot fit the audio deadline plus jitter buffer.
+
 DPDFNet:
     https://github.com/ceva-ip/DPDFNet
 
@@ -76,21 +96,27 @@ After installing it, you should have endpoints like:
     CABLE Input
     CABLE Output
 
-The bridge writes audio into:
+The bridge writes audio into the render endpoint:
 
     CABLE Input
 
-Apps should use this as the microphone:
+Apps should use the capture endpoint as the microphone:
 
     CABLE Output
 
-So in Discord, OBS, games, and other apps, choose CABLE Output as the mic.
+Startup validation refuses routes where the selected output is not the render
+endpoint or where the matching app-facing capture endpoint is not visible. In
+Discord, OBS, games, and other apps, choose CABLE Output as the mic.
 
 
 LINUX WITH PIPEWIRE
 -------------------
 
-Create the virtual mic target first:
+Create the virtual mic target first. Prefer the PipeWire-native command:
+
+    pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=dpdfnet_mic node.description="DPDFNet_Mic" media.class=Audio/Source/Virtual audio.position=[ MONO ] }'
+
+If your system only exposes the Pulse compatibility tools, use the fallback:
 
     pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
 
@@ -98,8 +124,9 @@ Apps should select this as the microphone:
 
     DPDFNet_Mic
 
-Some apps may show the matching source or monitor instead. Pick the one
-that receives the bridge audio.
+The bridge validates that the selected output is the render side of a virtual
+microphone route. Do not select speakers, headphones, monitor endpoints, or
+recording-side endpoints as --output.
 
 
 START THE BRIDGE
@@ -178,7 +205,9 @@ LINUX PIPEWIRE
 --------------
 
     uv sync
-    pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
+    pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=dpdfnet_mic node.description="DPDFNet_Mic" media.class=Audio/Source/Virtual audio.position=[ MONO ] }'
     uv run dpdfnet-mic-bridge
+
+If pw-cli is not available, use the Pulse-compatible pactl fallback shown above.
 
 Then select DPDFNet_Mic in Discord, OBS, a game, or another app.

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import math
 import platform
 import shlex
 
-from ..audio.blocksize import next_power_of_two
 from ..audio.hostapi import hostapi_filter_key_for_name
 from ..audio.tags import has_bridge_output_tags
 from ..models.registry import DEFAULT_MODEL
@@ -33,12 +31,10 @@ def print_run_summary(config: RunConfig) -> None:
     )
 
     block_line = f"{config.block_size} frames / {config.block_ms:.3f} ms"
-    if config.block_policy == "auto-linux-jack":
-        block_line += " (JACK)"
-    elif config.block_policy == "explicit":
-        block_line += f" (requested {config.requested_block_ms:.3f} ms)"
-    elif config.block_policy == "explicit-frames":
-        block_line += f" (requested {config.requested_block_frames} frames)"
+    if config.block_policy == "auto-jack-period":
+        block_line += " (JACK period multiple)"
+    elif config.block_policy == "auto-20ms-grow":
+        block_line += " (auto)"
 
     print()
     print("Mic bridge")
@@ -95,30 +91,7 @@ def print_run_summary(config: RunConfig) -> None:
     print()
 
 
-def _next_block_setting(config: RunConfig) -> tuple[str, str, str]:
-    """
-    Return (flag, value, label) for the next sensible restart.
-
-    JACK users generally think in exact period sizes, so suggest frames there.
-    Other backends get a rounded millisecond suggestion.
-    """
-    if hostapi_filter_key_for_name(config.input_hostapi_name) == "jack":
-        next_frames = next_power_of_two(config.block_size + 1)
-        next_ms = (float(next_frames) * 1000.0) / float(config.sample_rate)
-        return (
-            "--block-frames",
-            str(next_frames),
-            f"{next_frames} frames / {next_ms:.3f} ms",
-        )
-
-    next_ms = int(math.ceil(max(20.0, config.block_ms + 5.0, config.block_ms * 1.5)))
-    next_frames = int(round(config.sample_rate * (next_ms / 1000.0)))
-    return "--block-ms", str(next_ms), f"{next_frames} frames / {next_ms:.3f} ms"
-
-
-def _restart_command_for_block(config: RunConfig) -> tuple[str, str]:
-    flag, value, label = _next_block_setting(config)
-
+def _restart_command_for_same_route(config: RunConfig) -> str:
     parts = ["dpdfnet-mic-bridge"]
     if config.model_name != DEFAULT_MODEL:
         parts.extend(["--model", config.model_name])
@@ -130,14 +103,13 @@ def _restart_command_for_block(config: RunConfig) -> tuple[str, str]:
     if config.latency != DEFAULT_LATENCY:
         parts.extend(["--latency", config.latency])
 
-    parts.extend([flag, value])
-    return shlex.join(parts), label
+    return shlex.join(parts)
 
 
 def print_block_tuning_next_step(config: RunConfig) -> None:
-    command, label = _restart_command_for_block(config)
-    print("If audio broke up, restart with:")
+    command = _restart_command_for_same_route(config)
+    print("Block sizing is automatic. If audio broke up, restart the same route:")
     print(f"  {command}")
     print(
-        f"  next block {label}; current {config.block_size} frames / {config.block_ms:.3f} ms"
+        f"  current automatic block {config.block_size} frames / {config.block_ms:.3f} ms"
     )
