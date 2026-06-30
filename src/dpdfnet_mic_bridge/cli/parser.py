@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 
-from .audio_system import linux_virtual_mic_command
-from .constants import (DEFAULT_LATENCY, DEFAULT_MODEL,
-                        LIST_DEVICE_HOSTAPI_CHOICES, MODEL_SAMPLE_RATES)
+from ..audio.hostapi import LIST_DEVICE_HOSTAPI_CHOICES
+from ..audio.virtual_mic import linux_virtual_mic_command
+from ..bridge.config import DEFAULT_LATENCY
+from ..models.registry import DEFAULT_MODEL, MODEL_SAMPLE_RATES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,9 +16,9 @@ def build_parser() -> argparse.ArgumentParser:
             "DPDFNet microphone bridge.\n"
             "\n"
             "Examples:\n"
-            "  python mic_bridge.py\n"
-            "  python mic_bridge.py devices\n"
-            "  python mic_bridge.py --input 15 --output 19"
+            "  dpdfnet-mic-bridge\n"
+            "  dpdfnet-mic-bridge devices\n"
+            "  dpdfnet-mic-bridge --input 15 --output 19"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=(
@@ -49,7 +50,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MODEL,
         help=f"model whose native sample rate will be probed (default: {DEFAULT_MODEL})",
     )
-
     list_parser.add_argument(
         "--hostapi",
         type=str,

@@ -1,67 +1,18 @@
-"""Small shared data structures."""
+"""Callback-safe buffers and status accounting."""
 
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
 
 import numpy as np
 
-from .constants import CALLBACK_STATUS_FLAG_NAMES
-
-
-@dataclass(frozen=True)
-class AudioInventory:
-    """Snapshot of the current PortAudio device view."""
-
-    devices: list[dict]
-    hostapi_names: list[str]
-
-
-@dataclass(frozen=True)
-class DeviceProbe:
-    device_id: int
-    direction: str
-    name: str
-    hostapi_name: str
-    default_samplerate: float
-    max_channels: int
-    open_channels: int | None
-    probe_failures: tuple[str, ...]
-    tags: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class ProbeSnapshot:
-    """One probing pass over the current audio inventory."""
-
-    inventory: AudioInventory
-    input_probes: list[DeviceProbe]
-    output_probes: list[DeviceProbe]
-
-
-@dataclass(frozen=True)
-class RunConfig:
-    model_name: str
-    sample_rate: int
-    block_ms: float
-    requested_block_ms: float | None
-    requested_block_frames: int | None
-    block_policy: str
-    block_size: int
-    input_device_id: int
-    input_device_name: str
-    input_hostapi_name: str
-    input_channels: int
-    input_tags: tuple[str, ...]
-    input_was_auto_selected: bool
-    output_device_id: int
-    output_device_name: str
-    output_hostapi_name: str
-    output_channels: int
-    output_tags: tuple[str, ...]
-    output_was_auto_selected: bool
-    latency: str
+CALLBACK_STATUS_FLAG_NAMES: tuple[str, ...] = (
+    "input_underflow",
+    "input_overflow",
+    "output_underflow",
+    "output_overflow",
+    "priming_output",
+)
 
 
 class AudioFifo:

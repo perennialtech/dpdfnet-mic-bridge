@@ -1,8 +1,17 @@
-"""Model/sample-rate policy. There is no live resampling."""
+"""DPDFNet model registry and sample-rate policy."""
 
 from __future__ import annotations
 
-from .constants import MODEL_SAMPLE_RATES
+MODEL_SAMPLE_RATES: dict[str, int] = {
+    "baseline": 16000,
+    "dpdfnet2": 16000,
+    "dpdfnet4": 16000,
+    "dpdfnet8": 16000,
+    "dpdfnet2_48khz_hr": 48000,
+    "dpdfnet8_48khz_hr": 48000,
+}
+
+DEFAULT_MODEL = "dpdfnet8_48khz_hr"
 
 
 def model_native_sample_rate(model_name: str) -> int:

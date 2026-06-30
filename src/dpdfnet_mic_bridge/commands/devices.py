@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import argparse
 import platform
+import shlex
 import sys
 
-from .audio_system import (build_device_probes, build_run_command_suggestion,
-                           hostapi_filter_key_for_name,
-                           is_likely_virtual_bridge_output,
-                           is_viable_auto_input_candidate,
-                           linux_virtual_mic_command, query_audio_inventory,
-                           resolve_list_hostapi_filter, suggest_run_pair)
-from .constants import DEFAULT_MODEL, HOSTAPI_FILTER_DISPLAY_NAMES
-from .domain import DeviceProbe
-from .modeling import model_native_sample_rate
+from ..audio.hostapi import (HOSTAPI_FILTER_DISPLAY_NAMES,
+                             hostapi_filter_key_for_name)
+from ..audio.inventory import query_audio_inventory
+from ..audio.probing import build_device_probes
+from ..audio.selection import (is_likely_virtual_bridge_output,
+                               is_viable_auto_input_candidate,
+                               suggest_run_pair)
+from ..audio.types import DeviceProbe
+from ..audio.virtual_mic import linux_virtual_mic_command
+from ..models.registry import DEFAULT_MODEL, model_native_sample_rate
 
 
 def _eprint(*args: object) -> None:
@@ -50,6 +52,7 @@ def _probe_badges(probe: DeviceProbe) -> str:
         badges.append("pin-only")
     elif "dpdfnet" in tags:
         badges.append("dpdfnet")
+
     if "mic" in tags:
         badges.append("mic")
     if "audio-interface" in tags:
@@ -92,6 +95,29 @@ def _print_probe_section(
         print(f"  [{probe.device_id}]  {probe.name}  ({', '.join(details)})")
 
 
+def _build_run_command_suggestion(
+    *,
+    input_id: int,
+    output_id: int,
+    model_name: str,
+) -> str:
+    parts = ["dpdfnet-mic-bridge"]
+
+    if model_name != DEFAULT_MODEL:
+        parts.extend(["--model", model_name])
+
+    parts.extend(
+        [
+            "--input",
+            str(input_id),
+            "--output",
+            str(output_id),
+        ]
+    )
+
+    return shlex.join(parts)
+
+
 def _print_next_steps(
     *,
     model_name: str,
@@ -105,7 +131,7 @@ def _print_next_steps(
         print("Use:")
         print(
             "  "
-            + build_run_command_suggestion(
+            + _build_run_command_suggestion(
                 input_id=input_probe.device_id,
                 output_id=output_probe.device_id,
                 model_name=model_name,
@@ -113,7 +139,7 @@ def _print_next_steps(
         )
     else:
         print("Use:")
-        print("  python mic_bridge.py --input <id> --output <id>")
+        print("  dpdfnet-mic-bridge --input <id> --output <id>")
 
     if system == "Linux" and not any(
         is_likely_virtual_bridge_output(probe) for probe in output_probes
@@ -124,7 +150,7 @@ def _print_next_steps(
         print(f"  {linux_virtual_mic_command()}")
 
     print()
-    print("If a pinned ID stops working, run `python mic_bridge.py devices` again.")
+    print("If a pinned ID stops working, run `dpdfnet-mic-bridge devices` again.")
 
 
 def devices_command(args: argparse.Namespace) -> int:
@@ -136,7 +162,22 @@ def devices_command(args: argparse.Namespace) -> int:
         )
 
     inventory = query_audio_inventory()
-    hostapi_filter = resolve_list_hostapi_filter(
+    hostapi_filter = HOSTAPI_FILTER_DISPLAY_NAMES[
+        resolve_hostapi := __import__(
+            "dpdfnet_mic_bridge.audio.hostapi",
+            fromlist=["resolve_list_hostapi_filter"],
+        ).resolve_list_hostapi_filter(
+            args.hostapi,
+            args.all_apis,
+            inventory.hostapi_names,
+        )
+    ]
+    del hostapi_filter
+
+    hostapi_filter = __import__(
+        "dpdfnet_mic_bridge.audio.hostapi",
+        fromlist=["resolve_list_hostapi_filter"],
+    ).resolve_list_hostapi_filter(
         args.hostapi,
         args.all_apis,
         inventory.hostapi_names,
@@ -149,16 +190,16 @@ def devices_command(args: argparse.Namespace) -> int:
     )
 
     fast_path_command = (
-        "python mic_bridge.py"
+        "dpdfnet-mic-bridge"
         if args.model == DEFAULT_MODEL
-        else f"python mic_bridge.py --model {args.model}"
+        else f"dpdfnet-mic-bridge --model {args.model}"
     )
 
     print(f"Devices ({args.model}, {probe_sample_rate} Hz)")
     print(f"Showing: {HOSTAPI_FILTER_DISPLAY_NAMES[hostapi_filter]}")
     print(f"Start  : {fast_path_command}")
     if hostapi_filter != "all":
-        print("More   : python mic_bridge.py devices --all-apis")
+        print("More   : dpdfnet-mic-bridge devices --all-apis")
     print(
         "Auto   : chooses devices marked auto; pin-only devices require --input/--output"
     )
@@ -177,7 +218,7 @@ def devices_command(args: argparse.Namespace) -> int:
 
     if hostapi_filter != "all" and not input_probes and not output_probes:
         print(
-            f"No devices matched '{hostapi_filter}'. Try: python mic_bridge.py devices --all-apis"
+            f"No devices matched '{hostapi_filter}'. Try: dpdfnet-mic-bridge devices --all-apis"
         )
         print()
 
