@@ -95,24 +95,18 @@ endpoint or where the matching app-facing capture endpoint is not visible. In
 Discord, OBS, games, and other apps, choose CABLE Output as the mic.
 
 
-LINUX WITH PIPEWIRE
--------------------
+LINUX
+-----
 
-Create the virtual mic target first. Prefer the PipeWire-native command:
-
-    pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=dpdfnet_mic node.description="DPDFNet_Mic" media.class=Audio/Source/Virtual audio.position=[ MONO ] }'
-
-If your system only exposes the Pulse compatibility tools, use the fallback:
-
-    pactl load-module module-null-sink media.class=Audio/Source/Virtual sink_name=dpdfnet_mic sink_properties=device.description=DPDFNet_Mic channels=1 channel_map=mono
+The virtual microphone is created automatically when the bridge starts and
+destroyed when it stops.
 
 Apps should select this as the microphone:
 
     DPDFNet_Mic
 
-The bridge validates that the selected output is the render side of a virtual
-microphone route. Do not select speakers, headphones, monitor endpoints, or
-recording-side endpoints as --output.
+Do not select speakers, headphones, monitor endpoints, or recording-side
+endpoints as --output manually.
 
 
 START THE BRIDGE
@@ -187,13 +181,10 @@ WINDOWS
 Then select CABLE Output in Discord, OBS, a game, or another app.
 
 
-LINUX PIPEWIRE
---------------
+LINUX
+-----
 
     uv sync
-    pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=dpdfnet_mic node.description="DPDFNet_Mic" media.class=Audio/Source/Virtual audio.position=[ MONO ] }'
     uv run dpdfnet-mic-bridge
-
-If pw-cli is not available, use the Pulse-compatible pactl fallback shown above.
 
 Then select DPDFNet_Mic in Discord, OBS, a game, or another app.

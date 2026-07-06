@@ -85,7 +85,7 @@ def validate_backend_route(
             if not has_bridge_output_tags(output_tags):
                 raise ValueError(
                     "Selected Linux output is not a virtual microphone render target.\n"
-                    "Create the PipeWire virtual microphone target first or pin a valid output.\n"
+                    "Pin a valid virtual output.\n"
                     f"Output: id={output_device_id}, hostapi={output_hostapi}, name={output_name}"
                 )
 

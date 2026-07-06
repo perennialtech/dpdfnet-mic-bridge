@@ -11,6 +11,7 @@ import dpdfnet
 
 from .. import _native_audio
 from ..audio.stderr import silence_native_stderr
+from ..audio.virtual_mic import managed_linux_virtual_mic
 from ..realtime_env.runtime import RealtimeRuntimeManager
 from ..realtime_env.types import RuntimeTuningRequest
 from .config import build_run_config
@@ -111,7 +112,10 @@ def run_bridge(args: argparse.Namespace) -> int:
 
     realtime_request = RuntimeTuningRequest(mode=args.realtime)
 
-    with RealtimeRuntimeManager(realtime_request) as realtime:
+    with (
+        managed_linux_virtual_mic(),
+        RealtimeRuntimeManager(realtime_request) as realtime,
+    ):
         process_result = realtime.apply_process_tuning()
         realtime.strict_raise_if_needed(process_result, "process realtime setup")
 

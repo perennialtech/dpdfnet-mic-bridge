@@ -5,8 +5,6 @@ from __future__ import annotations
 import argparse
 
 from ..audio.hostapi import LIST_DEVICE_HOSTAPI_CHOICES
-from ..audio.virtual_mic import (linux_pipewire_virtual_mic_command,
-                                 linux_virtual_mic_command)
 from ..bridge.config import DEFAULT_LATENCY
 from ..models.registry import DEFAULT_MODEL, MODEL_SAMPLE_RATES
 from ..realtime_env.types import (DEFAULT_LINUX_MEMLOCK_KB, DEFAULT_LINUX_NICE,
@@ -26,13 +24,6 @@ def build_parser() -> argparse.ArgumentParser:
             "  dpdfnet-mic-bridge realtime status"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
-        epilog=(
-            "Linux PipeWire-native reusable target:\n"
-            f"  {linux_pipewire_virtual_mic_command()}\n\n"
-            "Pulse-compatible fallback:\n"
-            f"  {linux_virtual_mic_command()}\n\n"
-            "No live resampling; the model chooses the sample rate."
-        ),
     )
 
     subparsers = parser.add_subparsers(

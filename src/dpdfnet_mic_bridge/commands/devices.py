@@ -16,7 +16,6 @@ from ..audio.selection import (is_likely_virtual_bridge_output,
                                is_viable_auto_input_candidate,
                                suggest_run_pair)
 from ..audio.types import DeviceProbe
-from ..audio.virtual_mic import linux_virtual_mic_command
 from ..models.registry import DEFAULT_MODEL, model_native_sample_rate
 
 
@@ -146,9 +145,9 @@ def _print_next_steps(
         is_likely_virtual_bridge_output(probe) for probe in output_probes
     ):
         print()
-        print("No bridge output is visible.")
-        print("Create a virtual mic target:")
-        print(f"  {linux_virtual_mic_command()}")
+        print(
+            "No bridge output is visible. An ephemeral virtual mic will be created automatically when you run the bridge."
+        )
 
     print()
     print("If a pinned ID stops working, run `dpdfnet-mic-bridge devices` again.")

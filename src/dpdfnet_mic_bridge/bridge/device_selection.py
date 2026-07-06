@@ -14,7 +14,6 @@ from ..audio.selection import (choose_best_auto_input, choose_best_auto_output,
                                is_viable_auto_input_candidate,
                                suggest_run_pair)
 from ..audio.types import AudioInventory, DeviceProbe, ProbeSnapshot
-from ..audio.virtual_mic import linux_virtual_mic_command
 
 
 def scan_device_probes(
@@ -120,8 +119,7 @@ def _build_no_auto_output_handoff(
     if system == "Linux":
         return (
             "No bridge output found. Auto mode only picks virtual mic targets, not speakers/headphones or monitor/source endpoints.\n"
-            "Create a virtual mic target, then rerun `dpdfnet-mic-bridge devices`:\n"
-            f"  {linux_virtual_mic_command()}"
+            + list_devices_handoff("pin --output, or pin both IDs.")
         )
 
     return "No bridge output found.\n" + list_devices_handoff(
