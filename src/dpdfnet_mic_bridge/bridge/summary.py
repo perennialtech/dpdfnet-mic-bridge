@@ -8,17 +8,20 @@ import shlex
 from ..audio.hostapi import hostapi_filter_key_for_name
 from ..audio.tags import has_bridge_output_tags
 from ..models.registry import DEFAULT_MODEL
+from ..realtime_env.types import RuntimeTuningResult
 from .config import DEFAULT_LATENCY
 from .types import RunConfig
 
 
-def print_run_summary(config: RunConfig) -> None:
+def print_run_summary(
+    config: RunConfig,
+    realtime_result: RuntimeTuningResult | None = None,
+    realtime_warnings: list[str] | None = None,
+) -> None:
     system = platform.system()
     input_tags = set(config.input_tags)
     output_tags = set(config.output_tags)
 
-    # Reuse the same positive bridge-tag rule as auto mode so the run summary
-    # does not quietly drift away from the selection policy.
     output_looks_like_bridge_target = (
         has_bridge_output_tags(config.output_tags)
         and "monitor" not in output_tags
@@ -55,6 +58,24 @@ def print_run_summary(config: RunConfig) -> None:
         f"{'auto' if config.output_was_auto_selected else 'manual'})"
     )
 
+    if realtime_result is not None:
+        applied = [
+            action.id.rsplit(".", 1)[-1]
+            for action in realtime_result.actions
+            if action.status == "applied"
+        ]
+        failed = [
+            action.id.rsplit(".", 1)[-1]
+            for action in realtime_result.actions
+            if action.status == "failed"
+        ]
+        status_parts = [realtime_result.mode]
+        if applied:
+            status_parts.append("applied " + ",".join(applied[:4]))
+        if failed:
+            status_parts.append("failed " + ",".join(failed[:4]))
+        print(f"  rt     {'; '.join(status_parts)}")
+
     if system == "Windows":
         print("  app    select VB-CABLE 'CABLE Output'")
 
@@ -83,6 +104,9 @@ def print_run_summary(config: RunConfig) -> None:
         and hostapi_filter_key_for_name(config.input_hostapi_name) != "wasapi"
     ):
         warnings.append("WASAPI is usually best on Windows")
+
+    if realtime_warnings:
+        warnings.extend(realtime_warnings)
 
     if warnings:
         print("  warn")

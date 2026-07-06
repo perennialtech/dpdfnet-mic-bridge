@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, Ordering};
 
+use crate::platform_realtime;
+
 pub(crate) const STATE_NEW: u8 = 0;
 pub(crate) const STATE_STARTING: u8 = 1;
 pub(crate) const STATE_STARTED: u8 = 2;
@@ -49,6 +51,10 @@ pub(crate) struct EngineStats {
     pub(crate) null_callback_count: AtomicU64,
 
     pub(crate) fatal_error: AtomicU8,
+
+    pub(crate) callback_realtime_status: AtomicU8,
+    pub(crate) callback_realtime_error_code: AtomicI64,
+    pub(crate) callback_realtime_attempts: AtomicU64,
 }
 
 impl EngineStats {
@@ -89,6 +95,10 @@ impl EngineStats {
             null_callback_count: AtomicU64::new(0),
 
             fatal_error: AtomicU8::new(FATAL_NONE),
+
+            callback_realtime_status: AtomicU8::new(platform_realtime::THREAD_RT_NOT_REQUESTED),
+            callback_realtime_error_code: AtomicI64::new(0),
+            callback_realtime_attempts: AtomicU64::new(0),
         }
     }
 
@@ -192,6 +202,12 @@ impl EngineStats {
             FATAL_OVERSIZED_CALLBACK => "oversized_callback",
             _ => "unknown",
         }
+    }
+
+    pub(crate) fn callback_realtime_status_name(&self) -> &'static str {
+        platform_realtime::thread_realtime_status_name(
+            self.callback_realtime_status.load(Ordering::Relaxed),
+        )
     }
 }
 

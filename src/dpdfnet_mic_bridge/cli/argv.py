@@ -22,7 +22,7 @@ def normalize_argv(argv: Optional[list[str]]) -> list[str]:
         return ["run"]
 
     first = raw_args[0]
-    if first in {"devices", "run"} or first in _HELP_FLAGS:
+    if first in {"devices", "run", "realtime"} or first in _HELP_FLAGS:
         return raw_args
 
     if any(_looks_like_device_command_flag(arg) for arg in raw_args):

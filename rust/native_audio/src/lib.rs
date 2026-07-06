@@ -1,6 +1,7 @@
 mod device;
 mod engine;
 mod errors;
+mod platform_realtime;
 mod portaudio_ffi;
 mod ring;
 mod runtime;

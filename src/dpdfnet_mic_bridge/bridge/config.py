@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
+from typing import TYPE_CHECKING
 
 from ..audio.blocksize import MAX_AUTO_BLOCK_MS, iter_auto_block_sizes
 from ..audio.hostapi import same_hostapi_guidance
@@ -15,10 +17,16 @@ from .device_selection import (get_current_run_device_info,
                                resolve_run_device_selection)
 from .types import RunConfig
 
+if TYPE_CHECKING:
+    from ..realtime_env.runtime import RealtimeRuntimeManager
+
 DEFAULT_LATENCY = "high"
 
 
-def build_run_config(args: argparse.Namespace) -> RunConfig:
+def build_run_config(
+    args: argparse.Namespace,
+    realtime_manager: RealtimeRuntimeManager | None = None,
+) -> RunConfig:
     """
     Resolve CLI args into a concrete run configuration.
 
@@ -85,17 +93,29 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         sample_rate=sample_rate,
         hostapi_name=input_hostapi,
     ):
-        try:
-            input_channels, output_channels = negotiate_full_duplex_channels(
-                input_device_id=input_device_id,
-                output_device_id=output_device_id,
-                samplerate=sample_rate,
+        context = (
+            realtime_manager.probe_backend_latency_context(
+                hostapi_name=input_hostapi,
+                sample_rate=sample_rate,
                 block_size=block_size,
-                latency=args.latency,
-                input_device_info=input_info,
-                output_device_info=output_info,
-                dtype="float32",
+                block_ms=effective_block_ms,
             )
+            if realtime_manager is not None
+            else nullcontext()
+        )
+
+        try:
+            with context:
+                input_channels, output_channels = negotiate_full_duplex_channels(
+                    input_device_id=input_device_id,
+                    output_device_id=output_device_id,
+                    samplerate=sample_rate,
+                    block_size=block_size,
+                    latency=args.latency,
+                    input_device_info=input_info,
+                    output_device_info=output_info,
+                    dtype="float32",
+                )
         except Exception as exc:
             last_error = exc
             continue

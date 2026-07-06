@@ -9,17 +9,16 @@ from typing import Any
 
 import numpy as np
 
-from ..realtime import configure_realtime_worker_thread
+from ..realtime_env.errors import RealtimeSetupError
+from ..realtime_env.threading import (close_thread_realtime_context,
+                                      configure_realtime_worker_thread)
+from ..realtime_env.types import RuntimeTuningRequest, ThreadTuningResult
 
 
 class EnhancementWorker:
     """
     Pull complete mono input blocks from the native engine, run DPDFNet, and
     push enhanced mono samples back to the native engine.
-
-    The worker uses reusable NumPy buffers for native input and output staging.
-    It primes a target playout buffer, sanitizes input before inference, reports
-    per-block timing, and performs small queue-depth-based drift corrections.
     """
 
     def __init__(
@@ -29,6 +28,7 @@ class EnhancementWorker:
         *,
         sample_rate: int,
         block_size: int,
+        realtime_request: RuntimeTuningRequest | None = None,
         read_timeout_ms: int = 100,
     ) -> None:
         self._engine = engine
@@ -37,6 +37,7 @@ class EnhancementWorker:
         self._block_size = block_size
         self._read_timeout_ms = read_timeout_ms
         self._block_seconds = float(block_size) / float(sample_rate)
+        self._realtime_request = realtime_request or RuntimeTuningRequest(mode="off")
 
         self._input_buffer = np.empty(block_size, dtype=np.float32)
         self._silence_buffer = np.zeros(block_size, dtype=np.float32)
@@ -46,7 +47,7 @@ class EnhancementWorker:
         self._failed = threading.Event()
         self._failure: BaseException | None = None
         self._thread: threading.Thread | None = None
-        self._priority_warnings: list[str] = []
+        self._thread_tuning_result: ThreadTuningResult | None = None
 
         self.input_blocks = 0
         self.input_frames = 0
@@ -99,9 +100,11 @@ class EnhancementWorker:
             ("worker_deadline_misses", self.deadline_misses),
         )
         lines = [f"  - {name}: {count}" for name, count in pairs if count]
-        lines.extend(
-            f"  - realtime_priority: {line}" for line in self._priority_warnings
-        )
+        if self._thread_tuning_result is not None:
+            lines.extend(
+                f"  - realtime_worker: {line}"
+                for line in self._thread_tuning_result.warning_lines
+            )
         return lines
 
     def metrics_snapshot(self) -> dict[str, float | int]:
@@ -134,9 +137,22 @@ class EnhancementWorker:
         )
 
     def _run(self) -> None:
-        self._priority_warnings = configure_realtime_worker_thread()
-
         try:
+            self._thread_tuning_result = configure_realtime_worker_thread(
+                self._realtime_request
+            )
+            if (
+                self._realtime_request.mode == "strict"
+                and not self._thread_tuning_result.ok
+            ):
+                detail = "\n".join(
+                    f"  - {line}" for line in self._thread_tuning_result.warning_lines
+                )
+                raise RealtimeSetupError(
+                    "worker thread realtime setup failed in strict realtime mode."
+                    + (f"\n{detail}" if detail else "")
+                )
+
             self._prime_target_latency()
 
             while not self._stop.is_set():
@@ -180,6 +196,8 @@ class EnhancementWorker:
             if not self._stop.is_set():
                 self._failure = exc
                 self._failed.set()
+        finally:
+            close_thread_realtime_context()
 
     def _prime_target_latency(self) -> None:
         target_frames = int(self._engine.target_output_queue_frames())
@@ -219,15 +237,11 @@ class EnhancementWorker:
             )
 
         if output_block.size > 1 and queue_depth > target_depth + self._block_size:
-            # Render clock is effectively behind or inference burst filled the
-            # queue: drop one sample from this block to pull latency down.
             corrected_size = int(output_block.size) - 1
             self._output_scratch[:corrected_size] = output_block[1:]
             return self._output_scratch[:corrected_size]
 
         if output_block.size > 0 and queue_depth + output_block.size < target_depth:
-            # Render clock is effectively ahead or queue ran low: duplicate one
-            # frame to gently push playout latency back toward target.
             corrected_size = int(output_block.size) + 1
             self._output_scratch[: output_block.size] = output_block
             self._output_scratch[output_block.size : corrected_size] = output_block[-1]

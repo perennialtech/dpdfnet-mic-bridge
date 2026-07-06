@@ -11,6 +11,7 @@ use pyo3::types::PyDict;
 
 use crate::device::{build_stream_parameters, StreamDirection};
 use crate::errors::runtime_error;
+use crate::platform_realtime;
 use crate::portaudio_ffi as ffi;
 use crate::ring::SpscSampleRing;
 use crate::runtime::PortAudioRuntime;
@@ -42,6 +43,10 @@ pub struct AudioEngineConfig {
     pub output_channels: i32,
     #[pyo3(get)]
     pub latency: String,
+    #[pyo3(get)]
+    pub realtime_callback: bool,
+    #[pyo3(get)]
+    pub callback_realtime_priority: i32,
 }
 
 #[pymethods]
@@ -54,7 +59,9 @@ impl AudioEngineConfig {
         output_device_id,
         input_channels,
         output_channels,
-        latency = None
+        latency = None,
+        realtime_callback = true,
+        callback_realtime_priority = 20
     ))]
     fn new(
         sample_rate: i32,
@@ -64,6 +71,8 @@ impl AudioEngineConfig {
         input_channels: i32,
         output_channels: i32,
         latency: Option<String>,
+        realtime_callback: bool,
+        callback_realtime_priority: i32,
     ) -> PyResult<Self> {
         if sample_rate <= 0 {
             return Err(runtime_error(format!(
@@ -108,6 +117,12 @@ impl AudioEngineConfig {
             )));
         }
 
+        if !(1..=99).contains(&callback_realtime_priority) {
+            return Err(runtime_error(format!(
+                "Invalid callback_realtime_priority {callback_realtime_priority}; expected 1..=99."
+            )));
+        }
+
         Ok(Self {
             sample_rate,
             block_size,
@@ -116,6 +131,8 @@ impl AudioEngineConfig {
             input_channels,
             output_channels,
             latency,
+            realtime_callback,
+            callback_realtime_priority,
         })
     }
 }
@@ -311,6 +328,8 @@ impl EngineInner {
             Arc::clone(&self.output_ring),
             Arc::clone(&self.stats),
             Arc::clone(&self.state),
+            self.config.realtime_callback,
+            self.config.callback_realtime_priority,
         ));
 
         let user_data = (&mut *callback_data as *mut CallbackData).cast::<c_void>();
@@ -752,6 +771,26 @@ impl EngineInner {
             "state",
             state_name(self.state.load(Ordering::Acquire)),
         )?;
+        out.set_item(
+            "callback_realtime_status",
+            self.stats.callback_realtime_status_name(),
+        )?;
+        out.set_item(
+            "callback_realtime_error_code",
+            self.stats
+                .callback_realtime_error_code
+                .load(Ordering::Relaxed),
+        )?;
+        out.set_item(
+            "callback_realtime_attempts",
+            self.stats
+                .callback_realtime_attempts
+                .load(Ordering::Relaxed),
+        )?;
+        out.set_item(
+            "callback_realtime_priority",
+            self.config.callback_realtime_priority,
+        )?;
 
         let (input_latency, output_latency, actual_sample_rate) = self.stream_latency();
         out.set_item("actual_input_latency", input_latency)?;
@@ -805,6 +844,9 @@ struct CallbackData {
 
     stats: Arc<EngineStats>,
     state: Arc<AtomicU8>,
+
+    realtime_callback: bool,
+    callback_realtime_priority: i32,
 }
 
 impl CallbackData {
@@ -817,7 +859,24 @@ impl CallbackData {
         output_ring: Arc<SpscSampleRing>,
         stats: Arc<EngineStats>,
         state: Arc<AtomicU8>,
+        realtime_callback: bool,
+        callback_realtime_priority: i32,
     ) -> Self {
+        stats.callback_realtime_status.store(
+            if realtime_callback {
+                platform_realtime::THREAD_RT_PENDING
+            } else {
+                platform_realtime::THREAD_RT_NOT_REQUESTED
+            },
+            Ordering::Relaxed,
+        );
+        stats
+            .callback_realtime_error_code
+            .store(0, Ordering::Relaxed);
+        stats
+            .callback_realtime_attempts
+            .store(0, Ordering::Relaxed);
+
         Self {
             sample_rate,
             block_size,
@@ -833,6 +892,9 @@ impl CallbackData {
 
             stats,
             state,
+
+            realtime_callback,
+            callback_realtime_priority,
         }
     }
 }
@@ -864,6 +926,8 @@ unsafe extern "C" fn audio_callback(
         data.state.store(STATE_FAILED, Ordering::Release);
         return ffi::PA_ABORT;
     }
+
+    maybe_configure_callback_realtime(data);
 
     let frames = frame_count as usize;
 
@@ -958,6 +1022,44 @@ unsafe extern "C" fn audio_callback(
     );
 
     ffi::PA_CONTINUE
+}
+
+fn maybe_configure_callback_realtime(data: &CallbackData) {
+    if !data.realtime_callback {
+        data.stats.callback_realtime_status.store(
+            platform_realtime::THREAD_RT_NOT_REQUESTED,
+            Ordering::Relaxed,
+        );
+        return;
+    }
+
+    if data
+        .stats
+        .callback_realtime_status
+        .compare_exchange(
+            platform_realtime::THREAD_RT_PENDING,
+            platform_realtime::THREAD_RT_ATTEMPTING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return;
+    }
+
+    data.stats
+        .callback_realtime_attempts
+        .fetch_add(1, Ordering::Relaxed);
+
+    let result = platform_realtime::configure_current_audio_thread(
+        data.callback_realtime_priority,
+    );
+    data.stats
+        .callback_realtime_error_code
+        .store(result.error_code as i64, Ordering::Relaxed);
+    data.stats
+        .callback_realtime_status
+        .store(result.status, Ordering::Release);
 }
 
 fn observe_status(data: &CallbackData, status_flags: ffi::PaStreamCallbackFlags) {

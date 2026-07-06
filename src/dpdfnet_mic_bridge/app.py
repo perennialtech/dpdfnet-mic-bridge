@@ -9,7 +9,7 @@ from .cli.argv import normalize_argv
 from .cli.parser import build_parser
 from .commands.devices import devices_command
 from .commands.run import run_command
-from .process_priority import boost_process_priority
+from .realtime_env.cli import realtime_command
 
 
 def eprint(*args: object) -> None:
@@ -29,8 +29,6 @@ def _print_exception_message(exc: BaseException) -> None:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    boost_process_priority()
-
     parser = build_parser()
 
     try:
@@ -40,6 +38,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             return devices_command(args)
         if args.command == "run":
             return run_command(args)
+        if args.command == "realtime":
+            return realtime_command(args)
     except KeyboardInterrupt:
         text = str(sys.exc_info()[1]).strip("\n")
         if text:
