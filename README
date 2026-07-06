@@ -11,25 +11,11 @@ The real-time audio engine is native Rust using PortAudio. Python is only the
 control, device-selection, CLI, and DPDFNet model layer. There is no sounddevice
 runtime dependency and no Python PortAudio callback.
 
-Audio policy:
-    The bridge processes internally as mono. Multichannel microphone input is
-    downmixed to mono before DPDFNet, and the enhanced mono signal is copied to
-    every selected output channel. Stereo preservation, beamforming, per-channel
-    selection, automatic gain control, and limiter policy before writing to the
-    virtual microphone are intentionally out of scope.
-
-Block-size policy:
-    User block-size flags are intentionally not exposed. The bridge starts with
-    an automatic 20 ms callback size and grows up to a bounded limit only when
-    exact full-duplex stream validation requires it. On JACK, the block size is
-    validated against the actual JACK graph period rather than guessed.
-
-Runtime policy:
-    The native callback owns audio I/O and uses explicit queue-depth tracking.
-    The Python worker uses reusable buffers, primes a target playout latency,
-    reports DPDFNet processing time on one terminal line, sanitizes NaN/Inf and
-    clipped input before inference, and refuses startup when measured inference
-    time cannot fit the audio deadline plus jitter buffer.
+The bridge processes internally as mono. Multichannel microphone input is
+downmixed to mono before DPDFNet, and the enhanced mono signal is copied to
+every selected output channel. Stereo preservation, beamforming, per-channel
+selection, automatic gain control, and limiter policy before writing to the
+virtual microphone are intentionally out of scope.
 
 DPDFNet:
     https://github.com/ceva-ip/DPDFNet
