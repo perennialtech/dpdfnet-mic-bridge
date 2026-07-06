@@ -28,6 +28,12 @@ features = ["pyo3/extension-module"]
 typeCheckingMode = "standard"
 
 [dependency-groups]
+bundle = [
+    "maturin>=1.14.1",
+    "patchelf>=0.17.2.4",
+    "pyinstaller>=6.21.0",
+    "pyinstaller-hooks-contrib>=2026.6",
+]
 dev = [
     "basedpyright>=1.39.6",
     "black>=26.5.1",

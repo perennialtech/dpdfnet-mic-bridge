@@ -1,55 +1,74 @@
-name: build
+name: bundle
 
 on:
   push:
-  pull_request:
+    tags:
+      - "v*"
 
 jobs:
-  linux:
-    name: Linux build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install native dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config portaudio19-dev
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Build extension and package
-        run: uv sync --frozen
-
-      - name: Import native extension
-        run: uv run python -c "import dpdfnet_mic_bridge._native_audio as n; print(n.query_audio_inventory()['portaudio_version'])"
-
   windows:
-    name: Windows build
     runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v5
         with:
-          toolchain: stable-x86_64-pc-windows-msvc
+          python-version: "3.12"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install PortAudio with vcpkg
-        shell: pwsh
+      - name: Install PortAudio
         run: |
           vcpkg install portaudio:x64-windows
-          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
 
-      - name: Build extension and package
-        run: uv sync --frozen
+      - name: Build bundle
+        shell: pwsh
+        run: |
+          uv sync --group bundle
+          uv run maturin develop --release
+          $env:PORTAUDIO_DLL="$env:VCPKG_ROOT\installed\x64-windows\bin\portaudio.dll"
+          uv run pyinstaller --clean -y packaging/dpdfnet-mic-bridge.spec
 
-      - name: Import native extension
-        run: uv run python -c "import dpdfnet_mic_bridge._native_audio as n; print(n.query_audio_inventory()['portaudio_version'])"
+      - name: Zip bundle
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\dpdfnet-mic-bridge -DestinationPath dpdfnet-mic-bridge-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: dpdfnet-mic-bridge-windows-x64.zip
+
+  linux:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install native deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config portaudio19-dev libportaudio2
+
+      - name: Build bundle
+        run: |
+          uv sync --group bundle
+          uv run maturin develop --release
+          export PORTAUDIO_SO=/usr/lib/x86_64-linux-gnu/libportaudio.so.2
+          uv run pyinstaller --clean -y packaging/dpdfnet-mic-bridge.spec
+
+      - name: Archive bundle
+        run: |
+          tar --zstd -cf dpdfnet-mic-bridge-linux-x64.tar.zst -C dist dpdfnet-mic-bridge
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: dpdfnet-mic-bridge-linux-x64.tar.zst
