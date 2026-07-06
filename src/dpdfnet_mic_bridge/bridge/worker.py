@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import math
 import threading
 import time
@@ -62,6 +63,7 @@ class EnhancementWorker:
         self.process_total_seconds = 0.0
         self.process_max_seconds = 0.0
         self.process_last_seconds = 0.0
+        self._rolling_times = collections.deque(maxlen=100)
 
     @property
     def failure(self) -> BaseException | None:
@@ -108,17 +110,26 @@ class EnhancementWorker:
         return lines
 
     def metrics_snapshot(self) -> dict[str, float | int]:
-        avg = (
+        all_time_avg = (
             self.process_total_seconds / self.process_blocks
             if self.process_blocks
             else 0.0
         )
-        rtf = avg / self._block_seconds if self._block_seconds > 0.0 else math.inf
+        if self._rolling_times:
+            rolling_avg = sum(self._rolling_times) / len(self._rolling_times)
+            rolling_max = max(self._rolling_times)
+        else:
+            rolling_avg = 0.0
+            rolling_max = 0.0
+
+        rtf = rolling_avg / self._block_seconds if self._block_seconds > 0.0 else math.inf
         return {
             "blocks": self.process_blocks,
             "last_ms": self.process_last_seconds * 1000.0,
-            "avg_ms": avg * 1000.0,
-            "max_ms": self.process_max_seconds * 1000.0,
+            "avg_ms": rolling_avg * 1000.0,
+            "max_ms": rolling_max * 1000.0,
+            "all_avg_ms": all_time_avg * 1000.0,
+            "all_max_ms": self.process_max_seconds * 1000.0,
             "deadline_ms": self._block_seconds * 1000.0,
             "deadline_misses": self.deadline_misses,
             "rtf": rtf,
@@ -131,6 +142,8 @@ class EnhancementWorker:
             f"block={metrics['last_ms']:.2f}ms "
             f"avg={metrics['avg_ms']:.2f}ms "
             f"max={metrics['max_ms']:.2f}ms "
+            f"all_avg={metrics['all_avg_ms']:.2f}ms "
+            f"all_max={metrics['all_max_ms']:.2f}ms "
             f"deadline={metrics['deadline_ms']:.2f}ms "
             f"miss={metrics['deadline_misses']} "
             f"rtf={metrics['rtf']:.2f}"
@@ -217,6 +230,7 @@ class EnhancementWorker:
         self.process_total_seconds += elapsed
         self.process_last_seconds = elapsed
         self.process_max_seconds = max(self.process_max_seconds, elapsed)
+        self._rolling_times.append(elapsed)
         if elapsed > self._block_seconds:
             self.deadline_misses += 1
 
