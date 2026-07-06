@@ -362,13 +362,13 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "dpdfnet" },
+    { name = "maturin" },
     { name = "numba" },
     { name = "numpy" },
 ]
 
 [package.dev-dependencies]
 bundle = [
-    { name = "maturin" },
     { name = "patchelf" },
     { name = "pyinstaller" },
     { name = "pyinstaller-hooks-contrib" },
@@ -385,13 +385,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "dpdfnet", specifier = ">=0.5.1" },
+    { name = "maturin", specifier = ">=1.14.1" },
     { name = "numba", specifier = ">=0.65" },
     { name = "numpy", specifier = ">=2.4" },
 ]
 
 [package.metadata.requires-dev]
 bundle = [
-    { name = "maturin", specifier = ">=1.14.1" },
     { name = "patchelf", specifier = ">=0.17.2.4" },
     { name = "pyinstaller", specifier = ">=6.21.0" },
     { name = "pyinstaller-hooks-contrib", specifier = ">=2026.6" },
