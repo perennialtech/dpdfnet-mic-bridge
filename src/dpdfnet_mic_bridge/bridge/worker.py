@@ -122,7 +122,9 @@ class EnhancementWorker:
             rolling_avg = 0.0
             rolling_max = 0.0
 
-        rtf = rolling_avg / self._block_seconds if self._block_seconds > 0.0 else math.inf
+        rtf = (
+            rolling_avg / self._block_seconds if self._block_seconds > 0.0 else math.inf
+        )
         return {
             "blocks": self.process_blocks,
             "last_ms": self.process_last_seconds * 1000.0,

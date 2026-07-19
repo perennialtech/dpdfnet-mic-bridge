@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import platform
 import sys
 import time
@@ -10,12 +11,13 @@ import time
 import dpdfnet
 
 from .. import _native_audio
+from ..audio.inventory import query_audio_inventory
 from ..audio.stderr import silence_native_stderr
 from ..audio.virtual_mic import managed_linux_virtual_mic
 from ..realtime_env.runtime import RealtimeRuntimeManager
 from ..realtime_env.types import RuntimeTuningRequest
 from .config import build_run_config
-from .device_selection import list_devices_handoff
+from .device_selection import get_current_run_device_info, list_devices_handoff
 from .summary import print_block_tuning_next_step, print_run_summary
 from .worker import EnhancementWorker, measure_model_realtime_capacity
 
@@ -112,14 +114,87 @@ def run_bridge(args: argparse.Namespace) -> int:
 
     realtime_request = RuntimeTuningRequest(mode=args.realtime)
 
+    initial_inventory = query_audio_inventory()
+    input_stable_id: str | None = None
+    output_stable_id: str | None = None
+
+    if args.input is not None:
+        try:
+            info = get_current_run_device_info(
+                inventory=initial_inventory, device_id=args.input, role="input"
+            )
+            input_stable_id = info["stable_id"]
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    if args.output is not None:
+        try:
+            info = get_current_run_device_info(
+                inventory=initial_inventory, device_id=args.output, role="output"
+            )
+            output_stable_id = info["stable_id"]
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
     with (
-        managed_linux_virtual_mic(),
+        managed_linux_virtual_mic(enabled=args.output is None) as virtual_mic,
         RealtimeRuntimeManager(realtime_request) as realtime,
     ):
         process_result = realtime.apply_process_tuning()
         realtime.strict_raise_if_needed(process_result, "process realtime setup")
 
-        config = build_run_config(args, realtime_manager=realtime)
+        shifted_inventory = (
+            query_audio_inventory() if virtual_mic is not None else initial_inventory
+        )
+
+        # Map to potentially shifted native IDs before resolution.
+        if virtual_mic is not None and (
+            input_stable_id is not None or output_stable_id is not None
+        ):
+
+            def find_shifted_id(
+                stable_id: str | None, original_id: int | None
+            ) -> int | None:
+                if stable_id is None:
+                    return None
+                for item in shifted_inventory.devices:
+                    if item.get("stable_id") == stable_id:
+                        return int(item.get("id", -1))
+                return original_id
+
+            args.input = find_shifted_id(input_stable_id, args.input)
+            args.output = find_shifted_id(output_stable_id, args.output)
+
+        config = build_run_config(
+            args,
+            realtime_manager=realtime,
+            app_microphone_name=(
+                virtual_mic.capture_name if virtual_mic is not None else None
+            ),
+        )
+
+        # Map native IDs back to original logical IDs for printing and restart limits.
+        if virtual_mic is not None:
+
+            def get_logical_id(native_id: int) -> int:
+                try:
+                    info = get_current_run_device_info(
+                        inventory=shifted_inventory, device_id=native_id, role="mapping"
+                    )
+                    stable_id = info["stable_id"]
+                    for item in initial_inventory.devices:
+                        if item.get("stable_id") == stable_id:
+                            return int(item.get("id", -1))
+                except ValueError:
+                    pass
+                return native_id
+
+            config = dataclasses.replace(
+                config,
+                input_device_id=get_logical_id(config.native_input_device_id),
+                output_device_id=get_logical_id(config.native_output_device_id),
+            )
+
         route_result = realtime.apply_route_tuning(config)
         realtime.strict_raise_if_needed(route_result, "route realtime setup")
 
@@ -173,8 +248,8 @@ def run_bridge(args: argparse.Namespace) -> int:
         engine_config = _native_audio.AudioEngineConfig(
             config.sample_rate,
             config.block_size,
-            config.input_device_id,
-            config.output_device_id,
+            config.native_input_device_id,
+            config.native_output_device_id,
             config.input_channels,
             config.output_channels,
             config.latency,

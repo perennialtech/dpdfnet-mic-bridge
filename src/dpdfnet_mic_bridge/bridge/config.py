@@ -26,6 +26,8 @@ DEFAULT_LATENCY = "high"
 def build_run_config(
     args: argparse.Namespace,
     realtime_manager: RealtimeRuntimeManager | None = None,
+    *,
+    app_microphone_name: str | None,
 ) -> RunConfig:
     """
     Resolve CLI args into a concrete run configuration.
@@ -127,17 +129,20 @@ def build_run_config(
             block_policy=block_policy,
             block_size=block_size,
             input_device_id=input_device_id,
+            native_input_device_id=input_device_id,
             input_device_name=input_name,
             input_hostapi_name=input_hostapi,
             input_channels=input_channels,
             input_tags=input_tags,
             input_was_auto_selected=input_was_auto_selected,
             output_device_id=output_device_id,
+            native_output_device_id=output_device_id,
             output_device_name=output_name,
             output_hostapi_name=output_hostapi,
             output_channels=output_channels,
             output_tags=output_tags,
             output_was_auto_selected=output_was_auto_selected,
+            app_microphone_name=app_microphone_name,
             latency=args.latency,
         )
 

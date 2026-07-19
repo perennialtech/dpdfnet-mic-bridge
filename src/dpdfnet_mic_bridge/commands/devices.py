@@ -146,7 +146,8 @@ def _print_next_steps(
     ):
         print()
         print(
-            "No bridge output is visible. An ephemeral virtual mic will be created automatically when you run the bridge."
+            "No bridge output is visible. Running without --output creates "
+            "'DPDFNet_Mic_Bridge' for the bridge and 'DPDFNet_Mic_Bridge_Capture' for apps."
         )
 
     print()

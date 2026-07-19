@@ -80,7 +80,13 @@ def print_run_summary(
         print("  app    select VB-CABLE 'CABLE Output'")
 
     elif system == "Linux":
-        print(f"  app    select '{config.output_device_name}' as the microphone")
+        if config.app_microphone_name is not None:
+            print(f"  app    select '{config.app_microphone_name}' as the microphone")
+        else:
+            print(
+                "  app    select the source/monitor fed by "
+                f"'{config.output_device_name}'"
+            )
 
     warnings: list[str] = []
     if should_print_generic_nonbridge_warning:

@@ -7,7 +7,6 @@ make sense for the backend-specific virtual microphone path.
 from __future__ import annotations
 
 import platform
-import shutil
 
 from .hostapi import hostapi_filter_key_for_name
 from .inventory import hostapi_name_for_device
@@ -75,12 +74,6 @@ def validate_backend_route(
             )
 
     elif system == "Linux":
-        if output_key == "pipewire" and shutil.which("pw-cli") is None:
-            raise ValueError(
-                "PipeWire route validation requires `pw-cli`, but it was not found. "
-                "Install PipeWire tools or choose a non-PipeWire route manually."
-            )
-
         if output_key in {"pipewire", "pulse", "jack"}:
             if not has_bridge_output_tags(output_tags):
                 raise ValueError(

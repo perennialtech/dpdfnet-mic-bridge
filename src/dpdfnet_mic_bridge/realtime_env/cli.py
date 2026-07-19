@@ -47,11 +47,14 @@ def _status_result(args: argparse.Namespace) -> RuntimeTuningResult:
         getattr(args, "input", None) is not None
         and getattr(args, "output", None) is not None
     ):
-        from ..audio.virtual_mic import managed_linux_virtual_mic
         from ..bridge.config import build_run_config
 
-        with managed_linux_virtual_mic(), RealtimeRuntimeManager(request) as manager:
-            config = build_run_config(args, realtime_manager=manager)
+        with RealtimeRuntimeManager(request) as manager:
+            config = build_run_config(
+                args,
+                realtime_manager=manager,
+                app_microphone_name=None,
+            )
             route_result = manager.apply_route_tuning(config)
             checks.extend(route_result.checks)
             actions.extend(route_result.actions)

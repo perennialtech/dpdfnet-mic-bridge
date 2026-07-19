@@ -79,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=False,
         help=(
             "numeric output device ID\n"
-            "Windows: usually VB-CABLE 'CABLE Input'; Linux: usually DPDFNet_Mic."
+            "Windows: usually VB-CABLE 'CABLE Input'; Linux: usually DPDFNet_Mic_Bridge."
         ),
     )
     run_parser.add_argument(
