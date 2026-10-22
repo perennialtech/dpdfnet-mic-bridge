@@ -44,7 +44,7 @@ def run_pulse_bridge(
         if stop.is_set():
             return 0
         with managed_linux_virtual_mic(
-            enabled=True, on_created=on_endpoints
+            enabled=True, on_created=on_endpoints, sample_rate=rate
         ) as endpoint:
             with PulseTransport(
                 microphone["name"], endpoint.render_name, rate, stop

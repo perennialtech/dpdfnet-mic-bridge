@@ -61,13 +61,18 @@ def _run_checked(
     return completed
 
 
-def _load_virtual_mic_module(pactl: str, sink_name: str, on_created=None) -> list[str]:
+def _load_virtual_mic_module(
+    pactl: str, sink_name: str, on_created=None, sample_rate: int = 48000
+) -> list[str]:
     sink_command = (
         pactl,
         "load-module",
         "module-null-sink",
         f"sink_name={sink_name}",
         f"sink_properties=device.description={LINUX_VIRTUAL_MIC_SINK_DESCRIPTION}",
+        # Server PCM defaults can quantize low-level enhanced audio to silence.
+        "format=float32le",
+        f"rate={sample_rate}",
         "channels=1",
         "channel_map=mono",
     )
@@ -219,6 +224,7 @@ def managed_linux_virtual_mic(
     *,
     enabled: bool,
     on_created=None,
+    sample_rate: int = 48000,
 ) -> Iterator[LinuxVirtualMic | None]:
     """
     Create and verify an owned render sink and a real app-facing capture source.
@@ -239,7 +245,7 @@ def managed_linux_virtual_mic(
                 LinuxVirtualMic(sink_name, f"{sink_name}_capture", tuple(module_ids))
             )
 
-    module_ids = _load_virtual_mic_module(pactl, sink_name, notify)
+    module_ids = _load_virtual_mic_module(pactl, sink_name, notify, sample_rate)
     try:
         _wait_for_virtual_sink(sink_name)
         yield LinuxVirtualMic(

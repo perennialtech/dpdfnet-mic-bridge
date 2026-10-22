@@ -39,7 +39,7 @@ def test_owned_endpoints_are_unique_and_cleaned(linux, monkeypatch):
     monkeypatch.setattr(
         mic,
         "_load_virtual_mic_module",
-        lambda pactl, name, notify: names.append(name) or ["41", "42"],
+        lambda pactl, name, notify, sample_rate: names.append(name) or ["41", "42"],
     )
     monkeypatch.setattr(mic, "_wait_for_virtual_sink", lambda name: None)
     monkeypatch.setattr(
@@ -125,3 +125,19 @@ def test_module_ids_use_portable_short_listing(linux, monkeypatch):
         {"index": 536870918, "name": "module-null-sink", "argument": "sink_name=owned"},
     ]
     assert calls == [("pactl", "list", "short", "modules")]
+
+
+def test_virtual_sink_preserves_float_output_at_model_rate(monkeypatch):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=f"{40 + len(calls)}\n")
+
+    monkeypatch.setattr(mic, "_run_checked", run)
+    assert mic._load_virtual_mic_module("pactl", "owned", sample_rate=16000) == [
+        "41",
+        "42",
+    ]
+    assert "format=float32le" in calls[0]
+    assert "rate=16000" in calls[0]

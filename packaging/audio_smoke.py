@@ -126,6 +126,10 @@ def main():
                 raise RuntimeError(
                     "The app-facing microphone name does not match the desktop instructions"
                 )
+            print(
+                f"Capture format: {capture_endpoint.get('sample_specification')}",
+                flush=True,
+            )
             capture = subprocess.Popen(
                 [
                     "parec",
@@ -154,7 +158,9 @@ def main():
                 or not np.any(output)
             ):
                 raise RuntimeError(
-                    "Virtual capture endpoint did not deliver finite, non-silent synthetic audio"
+                    "Virtual capture endpoint did not deliver finite, non-silent synthetic audio "
+                    f"(samples={output.size}, finite={bool(np.isfinite(output).all())}, "
+                    f"peak={float(np.max(np.abs(output))) if output.size else 0.0:.6g})"
                 )
             child.stdin.write(b"stop\n")
             child.stdin.flush()
