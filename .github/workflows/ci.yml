@@ -1,74 +1,187 @@
-name: bundle
+name: Test and package
 
 on:
+  pull_request:
   push:
-    tags:
-      - "v*"
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  UV_PYTHON: "3.12.13"
+  UV_PYTHON_INSTALL_MIRROR: https://github.com/astral-sh/python-build-standalone/releases/download
+  RUSTUP_TOOLCHAIN: "1.96.0"
+  QT_QPA_PLATFORM: offscreen
 
 jobs:
-  windows:
-    runs-on: windows-latest
-
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/build-environment
+      - run: uv sync --locked
+      - run: uv run --no-sync pytest -q
+      - run: uv run --no-sync python -c "import dpdfnet_mic_bridge; import dpdfnet_mic_bridge.app"
+      - run: uv run --no-sync python -m dpdfnet_mic_bridge --help
+      - run: uv run --no-sync ruff check src tests packaging
+      - run: uv run --no-sync black --check src tests packaging
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install PortAudio
-        run: |
-          vcpkg install portaudio:x64-windows
-
-      - name: Build bundle
-        shell: pwsh
-        run: |
-          uv sync --group bundle
-          uv run maturin develop --release
-          $env:PORTAUDIO_DLL="$env:VCPKG_ROOT\installed\x64-windows\bin\portaudio.dll"
-          uv run pyinstaller --clean -y packaging/dpdfnet-mic-bridge.spec
-
-      - name: Zip bundle
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist\dpdfnet-mic-bridge -DestinationPath dpdfnet-mic-bridge-windows-x64.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-x64
-          path: dpdfnet-mic-bridge-windows-x64.zip
-
-  linux:
-    runs-on: ubuntu-22.04
-
+  package:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    environment: ${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'build' }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install native deps
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/build-environment
+      - name: Validate tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: uv run --no-project python -c 'import os,tomllib; v=tomllib.load(open("pyproject.toml","rb"))["project"]["version"]; assert os.environ["GITHUB_REF_NAME"] == "v" + v'
+      - name: Stage pinned model and corresponding Qt sources
         run: |
+          uv run --no-project python packaging/stage_model.py
+          uv run --no-project python packaging/stage_qt_notices.py
+      - name: Install release environment
+        run: uv sync --locked --no-dev --group bundle --no-editable
+      - name: Verify wheel contents
+        run: |
+          uv build --wheel --out-dir build/release-wheel
+          uv run --no-sync python packaging/check_wheel.py build/release-wheel
+      - name: Stage Linux audio clients
+        if: runner.os == 'Linux'
+        run: uv run --no-sync python packaging/stage_linux_clients.py
+      - name: Collect notices and build folder bundle
+        run: |
+          uv run --no-sync python packaging/stage_notices.py
+          uv run --no-sync python -m PyInstaller --clean --noconfirm packaging/dpdfnet-mic-bridge.spec
+      - name: Retain Rust dependency source
+        run: cargo vendor --locked --manifest-path rust/native_audio/Cargo.toml build/third-party-sources/rust-crates
+      - name: Retain matching Ubuntu client-library sources
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sed -n 's/^deb /deb-src /p' /etc/apt/sources.list | sudo tee /etc/apt/sources.list.d/dpdfnet-source-packages.list
           sudo apt-get update
-          sudo apt-get install -y pkg-config portaudio19-dev libportaudio2
-
-      - name: Build bundle
+          uv run --no-sync python packaging/stage_native_sources.py
+      - name: Frozen Linux checks with empty caches and no network
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
-          uv sync --group bundle
-          uv run maturin develop --release
-          export PORTAUDIO_SO=/usr/lib/x86_64-linux-gnu/libportaudio.so.2
-          uv run pyinstaller --clean -y packaging/dpdfnet-mic-bridge.spec
-
-      - name: Archive bundle
+          dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge --help
+          unshare --user --map-root-user --net env XDG_CACHE_HOME="$RUNNER_TEMP/empty-cache" dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge self-test
+          dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge _desktop-ui-test
+      - name: Frozen Windows checks with empty caches
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          tar --zstd -cf dpdfnet-mic-bridge-linux-x64.tar.zst -C dist dpdfnet-mic-bridge
-
-      - uses: actions/upload-artifact@v4
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "empty-cache"
+          & dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge-cli.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "Frozen help failed" }
+          & dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge-cli.exe self-test
+          if ($LASTEXITCODE -ne 0) { throw "Frozen inference failed" }
+          & dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge-cli.exe _desktop-ui-test
+          if ($LASTEXITCODE -ne 0) { throw "Frozen desktop failed" }
+          $gui = Start-Process dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge.exe -ArgumentList "_desktop-ui-test" -PassThru
+          if (-not $gui.WaitForExit(30000)) { $gui.Kill(); throw "Windowed desktop smoke test timed out" }
+          if ($gui.ExitCode -ne 0) { throw "Windowed desktop smoke test failed" }
+      - name: Sign Windows application executables
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: ./packaging/sign_windows.ps1 -Files @("dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge.exe", "dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge-cli.exe")
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.6.1 --yes --no-progress --allow-downgrade
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
+          $version = uv run --no-sync python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0) { throw "Could not read the application version" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging/dpdfnet-mic-bridge.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed" }
+          $installer = (Get-ChildItem release/*-setup.exe).FullName
+          ./packaging/check_windows_install.ps1 -Installer $installer
+      - name: Sign Windows installer
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: ./packaging/sign_windows.ps1 -Files @((Get-ChildItem release/*-setup.exe).FullName)
+      - name: Build and test Linux AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          uv run --no-sync python packaging/build_appimage.py
+          APPIMAGE_EXTRACT_AND_RUN=1 release/*.AppImage --help
+          unshare --user --map-root-user --net env APPIMAGE_EXTRACT_AND_RUN=1 XDG_CACHE_HOME="$RUNNER_TEMP/appimage-empty-cache" release/*.AppImage self-test
+          APPIMAGE_EXTRACT_AND_RUN=1 release/*.AppImage _desktop-ui-test
+      - name: Synthetic Linux audio integration test
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          uv run --no-sync python packaging/audio_smoke.py dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge
+      - name: Upload candidate packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: linux-x64
-          path: dpdfnet-mic-bridge-linux-x64.tar.zst
+          name: package-${{ runner.os }}
+          path: release/*
+          if-no-files-found: error
+      - name: Upload corresponding sources and notices
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sources-and-notices-${{ runner.os }}
+          path: |
+            build/third-party-sources/*
+            build/notices/
+          compression-level: 0
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-22.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.13.4"
+      - run: uv python install "$UV_PYTHON"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: sources-and-notices-*
+          path: source-materials
+      - name: Prepare source materials and checksums
+        run: |
+          uv run --no-project python packaging/prepare_release_sources.py
+          uv run --no-project python packaging/checksums.py
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --draft --title "DPDFNet Mic Bridge ${GITHUB_REF_NAME#v}" --generate-notes --notes "Windows x64 installer and Linux x86-64 AppImage include the default CPU model. VB-CABLE is a separate Windows prerequisite; Linux needs a PulseAudio-compatible desktop session. Publish only after completing the clean-machine and license checklist in CONTRIBUTING.md."

@@ -13,8 +13,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .types import (AppliedAction, CheckResult, PersistentApplyRequest,
-                    PersistentApplyResult)
+from .types import (
+    AppliedAction,
+    CheckResult,
+    PersistentApplyRequest,
+    PersistentApplyResult,
+)
 
 LIMITS_PATH = Path("/etc/security/limits.d/95-dpdfnet-mic-bridge.conf")
 PIPEWIRE_METADATA_KEYS = (

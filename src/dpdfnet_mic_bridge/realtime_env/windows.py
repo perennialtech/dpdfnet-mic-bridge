@@ -6,8 +6,12 @@ import ctypes
 import subprocess
 from dataclasses import dataclass
 
-from .types import (AppliedAction, CheckResult, PersistentApplyRequest,
-                    PersistentApplyResult)
+from .types import (
+    AppliedAction,
+    CheckResult,
+    PersistentApplyRequest,
+    PersistentApplyResult,
+)
 
 HIGH_PRIORITY_CLASS = 0x00000080
 AVRT_PRIORITY_HIGH = 2

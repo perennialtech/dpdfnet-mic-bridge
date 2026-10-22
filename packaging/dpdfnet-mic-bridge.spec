@@ -2,48 +2,53 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+from pathlib import Path
+import sys
+import sysconfig
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
 
-block_cipher = None
+# Freeze the installed wheel, not stale metadata in a source checkout.
+sys.path.insert(0, sysconfig.get_path("purelib"))
 
-datas = []
+root = Path(SPECPATH).parent
+notices = root / "build" / "notices"
+if not (notices / "python-packages.json").is_file():
+    raise RuntimeError("Complete packaging/stage_notices.py successfully before freezing")
+
+from dpdfnet_mic_bridge.models.loading import resolve_local_model
+from dpdfnet_mic_bridge.models.registry import DEFAULT_MODEL
+
+resolve_local_model(DEFAULT_MODEL)
+datas = [(str(notices), "notices")]
 binaries = []
 hiddenimports = []
 
-try:
-    datas += collect_data_files("dpdfnet_mic_bridge")
-    datas += copy_metadata("dpdfnet_mic_bridge")
-except Exception:
-    pass
+datas += collect_data_files("dpdfnet_mic_bridge")
+datas += copy_metadata("dpdfnet_mic_bridge", recursive=True)
 
 for pkg in [
     "dpdfnet",
     "numba",
     "llvmlite",
     "librosa",
+    "onnxruntime",
 ]:
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(pkg)
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hiddenimports
 
-    try:
-        datas += copy_metadata(pkg)
-    except Exception:
-        pass
+    datas += copy_metadata(pkg)
 
-for pkg in [
-    "numpy",
-    "dpdfnet",
-    "numba",
-    "llvmlite",
-    "librosa",
-]:
-    try:
-        datas += copy_metadata(pkg)
-    except Exception:
-        pass
+if sys.platform == "linux":
+    pulse = root / "build" / "pulse"
+    for name in ("pactl", "parec", "pacat"):
+        path = pulse / "bin" / name
+        if not path.is_file():
+            raise RuntimeError("Run packaging/stage_linux_clients.py before freezing")
+        binaries.append((str(path), "pulse/bin"))
+    binaries += [(str(path), "pulse/lib") for path in (pulse / "lib").iterdir()]
 
 portaudio_path = (
     os.environ.get("PORTAUDIO_DLL")
@@ -52,7 +57,11 @@ portaudio_path = (
 )
 
 if portaudio_path:
+    if not Path(portaudio_path).is_file():
+        raise RuntimeError(f"PortAudio library does not exist: {portaudio_path}")
     binaries.append((portaudio_path, "."))
+elif sys.platform == "win32":
+    raise RuntimeError("PORTAUDIO_DLL must name the vcpkg PortAudio runtime DLL")
 
 launcher_path = os.path.join(SPECPATH, "launcher.py")
 hooks_path = os.path.join(SPECPATH, "hooks")
@@ -77,7 +86,19 @@ a = Analysis(
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
+
+if sys.platform == "linux":
+    sys.path.insert(0, str(root / "packaging"))
+    from stage_notices import append_native_notices
+    system_libraries = [source for _, source, _ in a.binaries if source.startswith(("/lib/", "/usr/lib/"))]
+    append_native_notices(system_libraries, notices)
+    known_data = {item[0] for item in a.datas}
+    for path in notices.rglob("*"):
+        if path.is_file():
+            target = "notices/" + path.relative_to(notices).as_posix()
+            if target not in known_data:
+                a.datas.append((target, str(path), "DATA"))
 
 exe = EXE(
     pyz,
@@ -89,11 +110,18 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    console=sys.platform != "win32",
 )
 
+executables = [exe]
+if sys.platform == "win32":
+    executables.append(EXE(
+        pyz, a.scripts, [], exclude_binaries=True,
+        name="dpdfnet-mic-bridge-cli", console=True, strip=False, upx=False,
+    ))
+
 coll = COLLECT(
-    exe,
+    *executables,
     a.binaries,
     a.datas,
     strip=False,

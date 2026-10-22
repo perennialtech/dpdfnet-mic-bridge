@@ -47,7 +47,6 @@ def validate_backend_route(
     output_tags: tuple[str, ...],
 ) -> None:
     system = platform.system()
-    input_key = hostapi_filter_key_for_name(input_hostapi)
     output_key = hostapi_filter_key_for_name(output_hostapi)
 
     if system == "Windows":

@@ -1,6 +1,9 @@
-from dpdfnet_mic_bridge.realtime_env.types import (AppliedAction, CheckResult,
-                                                   RuntimeTuningResult,
-                                                   ThreadTuningResult)
+from dpdfnet_mic_bridge.realtime_env.types import (
+    AppliedAction,
+    CheckResult,
+    RuntimeTuningResult,
+    ThreadTuningResult,
+)
 
 
 def test_runtime_result_computed_properties():

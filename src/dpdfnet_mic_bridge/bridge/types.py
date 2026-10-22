@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+DEFAULT_LATENCY = "high"
+
 
 @dataclass(frozen=True)
 class RunConfig:

@@ -6,13 +6,19 @@ import platform
 from collections.abc import Callable
 
 from ..audio.hostapi import hostapi_filter_key_for_name
-from ..audio.inventory import (device_info_from_inventory,
-                               hostapi_name_for_device, query_audio_inventory)
+from ..audio.inventory import (
+    device_info_from_inventory,
+    hostapi_name_for_device,
+    query_audio_inventory,
+)
 from ..audio.probing import build_device_probes
-from ..audio.selection import (choose_best_auto_input, choose_best_auto_output,
-                               is_likely_virtual_bridge_output,
-                               is_viable_auto_input_candidate,
-                               suggest_run_pair)
+from ..audio.selection import (
+    choose_best_auto_input,
+    choose_best_auto_output,
+    is_likely_virtual_bridge_output,
+    is_viable_auto_input_candidate,
+    suggest_run_pair,
+)
 from ..audio.types import AudioInventory, DeviceProbe, ProbeSnapshot
 
 

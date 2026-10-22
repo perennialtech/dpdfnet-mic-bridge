@@ -1,3 +1,10 @@
+import sys
+
+import pytest
+
+if sys.platform != "linux":
+    pytest.skip("Linux resource limits are platform-specific", allow_module_level=True)
+
 from dpdfnet_mic_bridge.realtime_env.linux import render_pam_limits_content
 
 

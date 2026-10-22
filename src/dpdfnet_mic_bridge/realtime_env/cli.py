@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import argparse
 import platform
+import sys
 
-from . import linux, windows
+from . import windows
+
+if sys.platform == "linux":
+    from . import linux
 from .formatting import print_human_status, print_json_result
 from .runtime import RealtimeRuntimeManager
-from .types import (AppliedAction, CheckResult, PersistentApplyRequest,
-                    PersistentApplyResult, RuntimeTuningRequest,
-                    RuntimeTuningResult)
+from .types import (
+    AppliedAction,
+    CheckResult,
+    PersistentApplyRequest,
+    PersistentApplyResult,
+    RuntimeTuningRequest,
+    RuntimeTuningResult,
+)
 
 
 def _status_result(args: argparse.Namespace) -> RuntimeTuningResult:

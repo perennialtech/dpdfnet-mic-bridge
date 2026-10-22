@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 
 from ..audio.hostapi import LIST_DEVICE_HOSTAPI_CHOICES
-from ..bridge.config import DEFAULT_LATENCY
+from ..bridge.types import DEFAULT_LATENCY
 from ..models.registry import DEFAULT_MODEL, MODEL_SAMPLE_RATES
-from ..realtime_env.types import (DEFAULT_LINUX_MEMLOCK_KB, DEFAULT_LINUX_NICE,
-                                  DEFAULT_LINUX_RTPRIO_LIMIT,
-                                  REALTIME_MODE_CHOICES)
+from ..realtime_env.types import (
+    DEFAULT_LINUX_MEMLOCK_KB,
+    DEFAULT_LINUX_NICE,
+    DEFAULT_LINUX_RTPRIO_LIMIT,
+    REALTIME_MODE_CHOICES,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,16 +32,21 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{run,devices,realtime}",
+        metavar="{desktop,run,devices,self-test,realtime}",
+    )
+
+    subparsers.add_parser("desktop", help="open the microphone bridge window")
+    subparsers.add_parser(
+        "self-test", help="test bundled-model inference offline without audio devices"
     )
 
     list_parser = subparsers.add_parser(
         "devices",
-        help="inspect devices and pin numeric IDs",
+        help="inspect microphones and advanced native devices",
         formatter_class=argparse.RawTextHelpFormatter,
         description=(
-            "List usable PortAudio devices at the model's native sample rate.\n"
-            "Defaults: WASAPI on Windows; PipeWire/PulseAudio/JACK/ALSA preference on Linux."
+            "List microphone sources: PulseAudio on Linux, WASAPI on Windows.\n"
+            "Use --all-apis for the advanced PortAudio inventory."
         ),
     )
     list_parser.add_argument(
@@ -71,7 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         type=int,
         required=False,
-        help="numeric input device ID",
+        help="microphone ID from devices (PulseAudio source on Linux, WASAPI device on Windows)",
+    )
+    run_parser.add_argument(
+        "--source",
+        type=str,
+        help="Linux PulseAudio source name (advanced alternative to --input)",
     )
     run_parser.add_argument(
         "--output",
@@ -79,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=False,
         help=(
             "numeric output device ID\n"
-            "Windows: usually VB-CABLE 'CABLE Input'; Linux: usually DPDFNet_Mic_Bridge."
+            "Windows: VB-CABLE 'CABLE Input'. Linux: opt into an advanced manual PortAudio route."
         ),
     )
     run_parser.add_argument(
@@ -100,8 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--realtime",
         type=str,
         choices=REALTIME_MODE_CHOICES,
-        default="auto",
-        help="OS realtime tuning mode (default: auto)",
+        default="off",
+        help="OS realtime tuning mode (default: off; auto/strict may change session-wide settings)",
     )
     run_parser.add_argument(
         "--verbose",
