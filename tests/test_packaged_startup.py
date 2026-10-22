@@ -44,3 +44,20 @@ def test_live_runner_imports_before_device_setup():
     from dpdfnet_mic_bridge.bridge.runner import run_bridge
 
     assert callable(run_bridge)
+
+
+def test_desktop_child_uses_utf8_for_redirected_output(monkeypatch):
+    import io
+    from dpdfnet_mic_bridge import desktop_process
+
+    output = io.BytesIO()
+    stream = io.TextIOWrapper(output, encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setattr(
+        desktop_process, "desktop_inventory", lambda: {"microphones": []}
+    )
+    assert desktop_process.internal_command(["_desktop-inventory"]) == 0
+    stream.write("麦克风")
+    stream.flush()
+    assert stream.encoding == "utf-8"
+    assert "麦克风".encode() in output.getvalue()

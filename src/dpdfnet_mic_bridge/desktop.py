@@ -93,6 +93,7 @@ class BridgeWindow(QMainWindow):
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
+        env.insert("PYTHONIOENCODING", "utf-8")
         self.process.setProcessEnvironment(env)
         self.process.readyReadStandardOutput.connect(self.read_output)
         self.process.finished.connect(self.finished)

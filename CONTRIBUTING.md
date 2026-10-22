@@ -79,6 +79,10 @@ Qt staging downloads large, checksum-pinned corresponding source archives to
 `build/third-party-sources/` and extracts license notices. Publish those sources
 with the binaries. Review the source manifest when changing Qt versions.
 
+Qt notice staging requires a fresh `build/qt-notices/`; use `--notices-dir` to
+inspect notices in another empty directory. Compact filenames are mapped to
+their original source paths in `index.json`, avoiding Windows path-length limits.
+
 On Linux, stage the native clients:
 
 ```sh
@@ -151,7 +155,9 @@ review, and hardware tests cannot be replaced by hosted CI.
   Audit libraries automatically selected by PyInstaller as well as staged clients.
 - Confirm each LGPL component's corresponding sources and required build
   materials are available with the release. CI retains Qt/Rust sources and
-  matching Ubuntu client-library sources. Review wheel-bundled native components
+  matching Ubuntu client-library sources. Superseded Ubuntu source versions are
+  fetched from Launchpad and checked against their exact source descriptors.
+  Review wheel-bundled native components
   too; a list of license names is not sufficient.
 - Verify timestamped Windows signatures and final checksums. Do not bundle
   VB-CABLE without permission, invent silent driver switches, or uninstall its

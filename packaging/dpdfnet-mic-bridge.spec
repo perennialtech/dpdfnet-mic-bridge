@@ -13,8 +13,8 @@ sys.path.insert(0, sysconfig.get_path("purelib"))
 
 root = Path(SPECPATH).parent
 notices = root / "build" / "notices"
-if not notices.is_dir():
-    raise RuntimeError("Run packaging/stage_notices.py before freezing")
+if not (notices / "python-packages.json").is_file():
+    raise RuntimeError("Complete packaging/stage_notices.py successfully before freezing")
 
 from dpdfnet_mic_bridge.models.loading import resolve_local_model
 from dpdfnet_mic_bridge.models.registry import DEFAULT_MODEL

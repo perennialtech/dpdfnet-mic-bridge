@@ -2,8 +2,15 @@
 from __future__ import annotations
 
 import os
+import ctypes
+import io
 import pathlib
 import sys
+
+error_output = None
+if sys.platform == "win32" and sys.stderr is None:
+    error_output = io.StringIO()
+    sys.stderr = error_output
 
 
 def _cache_root() -> pathlib.Path:
@@ -42,4 +49,17 @@ from dpdfnet_mic_bridge.app import (  # noqa: E402
     main,
 )
 
-raise SystemExit(main())
+exit_code = main()
+if exit_code and error_output is not None and error_output.getvalue().strip():
+    message_box = ctypes.WinDLL("user32", use_last_error=True).MessageBoxW
+    message_box.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint,
+    ]
+    message_box.restype = ctypes.c_int
+    message_box(
+        None, error_output.getvalue()[:4000], "DPDFNet Mic Bridge could not start", 0x10
+    )
+raise SystemExit(exit_code)

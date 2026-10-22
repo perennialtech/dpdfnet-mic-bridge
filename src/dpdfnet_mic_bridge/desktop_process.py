@@ -70,6 +70,11 @@ def desktop_inventory() -> dict:
 
 
 def internal_command(argv: list[str]) -> int:
+    # Frozen interpreters need an explicit encoding too: redirected Windows
+    # streams can otherwise reject non-English microphone names.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     if argv == ["_desktop-ui-test"]:
         from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QApplication

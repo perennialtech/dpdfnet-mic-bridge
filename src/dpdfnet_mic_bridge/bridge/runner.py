@@ -293,7 +293,7 @@ def run_bridge(
             enhancement_worker.start()
             worker_started = True
 
-            print("Streaming. Ctrl+C stops.")
+            print("Streaming." if on_ready else "Streaming. Ctrl+C stops.")
             if on_ready:
                 on_ready()
             print()
@@ -335,7 +335,9 @@ def run_bridge(
                     break
 
                 now = time.perf_counter()
-                if now >= next_metrics_print:
+                # Desktop children use newline-delimited messages. Terminal
+                # carriage-return metrics would accumulate in the GUI buffer.
+                if on_ready is None and now >= next_metrics_print:
                     print("\r" + enhancement_worker.metrics_line(), end="", flush=True)
                     next_metrics_print = now + 0.25
 

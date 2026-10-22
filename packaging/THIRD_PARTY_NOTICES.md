@@ -22,9 +22,13 @@ libraries or reverse engineering for debugging modifications to them.
 
 Windows installs the complete folder bundle. Linux AppImages can be extracted
 with `--appimage-extract`; run the extracted `AppRun` after replacing compatible
-libraries. Qt libraries live under `_internal/PySide6`, and Shiboken libraries
-under `_internal/shiboken6`. Preserve compatible names and ABI when replacing
+libraries. Qt and Shiboken shared libraries live in `_internal`, either at its
+root or under package subdirectories. Preserve compatible names and ABI when replacing
 them. Do not replace the application's Python or model files to replace Qt.
+
+`notices/qt/index.json` maps compact notice filenames to their original paths
+inside the matching source archives. This keeps installer paths short without
+discarding the upstream license and attribution texts.
 
 The release's source materials must include the corresponding Qt/PySide sources
 and their third-party notices. See the release checklist in `CONTRIBUTING.md`.

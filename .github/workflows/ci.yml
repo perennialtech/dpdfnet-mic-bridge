@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 env:
   UV_PYTHON: "3.12.13"
   UV_PYTHON_INSTALL_MIRROR: https://github.com/astral-sh/python-build-standalone/releases/download
@@ -92,6 +96,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Frozen inference failed" }
           & dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge-cli.exe _desktop-ui-test
           if ($LASTEXITCODE -ne 0) { throw "Frozen desktop failed" }
+          $gui = Start-Process dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge.exe -ArgumentList "_desktop-ui-test" -PassThru
+          if (-not $gui.WaitForExit(30000)) { $gui.Kill(); throw "Windowed desktop smoke test timed out" }
+          if ($gui.ExitCode -ne 0) { throw "Windowed desktop smoke test failed" }
       - name: Sign Windows application executables
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -104,7 +111,9 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --version=6.6.1 --yes --no-progress --allow-downgrade
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
           $version = uv run --no-sync python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0) { throw "Could not read the application version" }
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging/dpdfnet-mic-bridge.iss
           if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed" }
           $installer = (Get-ChildItem release/*-setup.exe).FullName

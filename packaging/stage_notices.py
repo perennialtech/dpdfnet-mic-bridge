@@ -90,6 +90,7 @@ def find_python_license(prefix: Path | None = None, stdlib: Path | None = None) 
 
 def main():
     DEST.mkdir(parents=True, exist_ok=True)
+    (DEST / "python-packages.json").unlink(missing_ok=True)
     shutil.copy2(ROOT / "LICENSE", DEST / "LICENSE-application.txt")
     shutil.copy2(
         ROOT / "packaging/THIRD_PARTY_NOTICES.md", DEST / "THIRD_PARTY_NOTICES.md"

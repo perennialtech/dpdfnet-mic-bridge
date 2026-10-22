@@ -16,6 +16,11 @@ def run_self_test() -> int:
         patch.object(socket.socket, "connect", deny_network),
         patch.object(socket, "create_connection", deny_network),
     ):
+        from . import _native_audio
+
+        if not hasattr(_native_audio, "AudioEngine"):
+            raise RuntimeError("The bundle is missing its native audio engine")
+
         import numpy as np
 
         from .models.loading import load_enhancer
