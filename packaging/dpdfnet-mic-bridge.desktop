@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=DPDFNet Mic Bridge
+Comment=Use an enhanced microphone in your calling apps
+Exec=dpdfnet-mic-bridge
+Icon=dpdfnet-mic-bridge
+Terminal=false
+Categories=AudioVideo;Audio;

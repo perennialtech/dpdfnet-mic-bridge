@@ -26,6 +26,7 @@ numba_cache.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("NUMBA_CACHE_DIR", str(numba_cache))
 
 if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+    dll_directories = []
     base = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(sys.executable).parent))
     candidates = [
         pathlib.Path(sys.executable).parent,
@@ -35,8 +36,10 @@ if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
 
     for candidate in candidates:
         if candidate.exists():
-            os.add_dll_directory(str(candidate))
+            dll_directories.append(os.add_dll_directory(str(candidate)))
 
-from dpdfnet_mic_bridge.app import main
+from dpdfnet_mic_bridge.app import (  # noqa: E402
+    main,
+)
 
 raise SystemExit(main())

@@ -1,0 +1,41 @@
+name: Native build environment
+description: Set up pinned Python, uv, Rust and platform audio prerequisites
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: "3.12.13"
+    - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      with:
+        version: "0.13.4"
+        enable-cache: true
+    - name: Install pinned Rust
+      shell: bash
+      run: rustup toolchain install 1.96.0 --profile minimal
+    - name: Install Linux audio build prerequisites
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config portaudio19-dev pulseaudio-utils pulseaudio libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libfuse2
+    - name: Install pinned Windows PortAudio
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $root = Join-Path $env:RUNNER_TEMP "dpdfnet-vcpkg"
+        git init $root
+        git -C $root remote add origin https://github.com/microsoft/vcpkg.git
+        git -C $root fetch --depth 1 origin bd8298ae219367a606c74c6c25dc50cc6d66eca8
+        git -C $root switch --detach FETCH_HEAD
+        & "$root\bootstrap-vcpkg.bat" -disableMetrics
+        $env:VCPKG_ROOT = $root
+        $env:VCPKGRS_TRIPLET = "x64-windows"
+        $env:VCPKGRS_DYNAMIC = "1"
+        & "$root\vcpkg.exe" install "portaudio[core]:x64-windows"
+        if ($LASTEXITCODE -ne 0) { throw "PortAudio build failed" }
+        "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+        "VCPKGRS_TRIPLET=x64-windows" >> $env:GITHUB_ENV
+        "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+        "PORTAUDIO_DLL=$root\installed\x64-windows\bin\portaudio.dll" >> $env:GITHUB_ENV
+        "$root\installed\x64-windows\bin" >> $env:GITHUB_PATH
