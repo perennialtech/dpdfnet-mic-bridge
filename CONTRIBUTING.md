@@ -3,8 +3,9 @@
 ## Source setup
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), Python 3.12,
-and a Rust toolchain. CI pins tool versions in the
-[build environment action](.github/actions/build-environment/action.yml).
+and a Rust toolchain. CI installs its tools through the
+[build environment action](.github/actions/build-environment/action.yml); the
+[workflow](.github/workflows/ci.yml) selects managed Python with `UV_PYTHON`.
 
 Ubuntu prerequisites:
 

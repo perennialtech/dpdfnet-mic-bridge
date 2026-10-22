@@ -74,15 +74,27 @@ def append_native_notices(paths, destination: Path) -> None:
     version_path.write_text(versions)
 
 
+def find_python_license(prefix: Path | None = None, stdlib: Path | None = None) -> Path:
+    prefix = prefix or Path(sys.base_prefix)
+    stdlib = stdlib or Path(sysconfig.get_path("stdlib"))
+    for path in (
+        stdlib / "LICENSE.txt",
+        prefix / "LICENSE.txt",
+        prefix / "LICENSE.cpython.txt",
+        prefix / "LICENSE",
+    ):
+        if path.is_file():
+            return path
+    raise RuntimeError("The build interpreter's Python license file is missing")
+
+
 def main():
     DEST.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "LICENSE", DEST / "LICENSE-application.txt")
     shutil.copy2(
         ROOT / "packaging/THIRD_PARTY_NOTICES.md", DEST / "THIRD_PARTY_NOTICES.md"
     )
-    shutil.copy2(
-        Path(sysconfig.get_path("stdlib")) / "LICENSE.txt", DEST / "LICENSE-Python.txt"
-    )
+    shutil.copy2(find_python_license(), DEST / "LICENSE-Python.txt")
     pending = ["dpdfnet-mic-bridge"]
     visited = set()
     inventory = []

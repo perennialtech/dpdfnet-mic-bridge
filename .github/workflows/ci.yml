@@ -11,6 +11,8 @@ permissions:
   contents: read
 
 env:
+  UV_PYTHON: "3.12.13"
+  UV_PYTHON_INSTALL_MIRROR: https://github.com/astral-sh/python-build-standalone/releases/download
   RUSTUP_TOOLCHAIN: "1.96.0"
   QT_QPA_PLATFORM: offscreen
 
@@ -45,11 +47,11 @@ jobs:
       - name: Validate tag version
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
-        run: python -c 'import os,tomllib; v=tomllib.load(open("pyproject.toml","rb"))["project"]["version"]; assert os.environ["GITHUB_REF_NAME"] == "v" + v'
+        run: uv run --no-project python -c 'import os,tomllib; v=tomllib.load(open("pyproject.toml","rb"))["project"]["version"]; assert os.environ["GITHUB_REF_NAME"] == "v" + v'
       - name: Stage pinned model and corresponding Qt sources
         run: |
-          python packaging/stage_model.py
-          python packaging/stage_qt_notices.py
+          uv run --no-project python packaging/stage_model.py
+          uv run --no-project python packaging/stage_qt_notices.py
       - name: Install release environment
         run: uv sync --locked --no-dev --group bundle --no-editable
       - name: Verify wheel contents
@@ -102,7 +104,7 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --version=6.6.1 --yes --no-progress --allow-downgrade
-          $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          $version = uv run --no-sync python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging/dpdfnet-mic-bridge.iss
           if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed" }
           $installer = (Get-ChildItem release/*-setup.exe).FullName
@@ -153,9 +155,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
         with:
-          python-version: "3.12.13"
+          version: "0.13.4"
+      - run: uv python install "$UV_PYTHON"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: package-*
@@ -167,8 +170,8 @@ jobs:
           path: source-materials
       - name: Prepare source materials and checksums
         run: |
-          python packaging/prepare_release_sources.py
-          python packaging/checksums.py
+          uv run --no-project python packaging/prepare_release_sources.py
+          uv run --no-project python packaging/checksums.py
       - name: Create draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
