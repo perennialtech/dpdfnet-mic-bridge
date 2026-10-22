@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import platform
+import sys
 from contextlib import nullcontext
 from dataclasses import replace
 from types import TracebackType
@@ -11,12 +12,13 @@ from typing import TYPE_CHECKING, ContextManager
 
 from ..audio.blocksize import jack_period_frames
 from ..audio.hostapi import hostapi_filter_key_for_name
-from . import linux, windows
-from .backend_latency import (BackendLatencySession,
-                              probe_backend_latency_context)
+from . import windows
+
+if sys.platform == "linux":
+    from . import linux
+from .backend_latency import BackendLatencySession, probe_backend_latency_context
 from .errors import RealtimeSetupError
-from .types import (AppliedAction, CheckResult, RuntimeTuningRequest,
-                    RuntimeTuningResult)
+from .types import AppliedAction, CheckResult, RuntimeTuningRequest, RuntimeTuningResult
 
 if TYPE_CHECKING:
     from ..bridge.types import RunConfig

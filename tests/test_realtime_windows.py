@@ -1,5 +1,4 @@
-from dpdfnet_mic_bridge.realtime_env.windows import \
-    build_persistent_command_plan
+from dpdfnet_mic_bridge.realtime_env.windows import build_persistent_command_plan
 
 
 def test_windows_persistent_command_plan_all():

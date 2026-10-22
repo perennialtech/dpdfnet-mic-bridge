@@ -3,15 +3,29 @@
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import platform
 import threading
 
-from .types import (AppliedAction, CheckResult, RuntimeTuningRequest,
-                    ThreadTuningResult)
+from .types import AppliedAction, CheckResult, RuntimeTuningRequest, ThreadTuningResult
 
 AVRT_PRIORITY_HIGH = 2
 
 _thread_state = threading.local()
+
+
+def _load_avrt():
+    avrt = ctypes.WinDLL("avrt", use_last_error=True)
+    avrt.AvSetMmThreadCharacteristicsW.argtypes = [
+        wintypes.LPCWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    avrt.AvSetMmThreadCharacteristicsW.restype = wintypes.HANDLE
+    avrt.AvSetMmThreadPriority.argtypes = [wintypes.HANDLE, ctypes.c_int]
+    avrt.AvSetMmThreadPriority.restype = wintypes.BOOL
+    avrt.AvRevertMmThreadCharacteristics.argtypes = [wintypes.HANDLE]
+    avrt.AvRevertMmThreadCharacteristics.restype = wintypes.BOOL
+    return avrt
 
 
 def _skipped(role: str, detail: str) -> ThreadTuningResult:
@@ -37,8 +51,8 @@ def _configure_windows_mmcss(
     actions: list[AppliedAction] = []
 
     try:
-        avrt = ctypes.WinDLL("avrt", use_last_error=True)
-        task_index = ctypes.c_ulong(0)
+        avrt = _load_avrt()
+        task_index = wintypes.DWORD(0)
         handle = avrt.AvSetMmThreadCharacteristicsW(
             ctypes.c_wchar_p(request.windows_mmcss_task),
             ctypes.byref(task_index),
@@ -94,9 +108,7 @@ def close_thread_realtime_context() -> None:
     handle = getattr(_thread_state, "mmcss_handle", None)
     if handle:
         try:
-            ctypes.WinDLL("avrt", use_last_error=True).AvRevertMmThreadCharacteristics(
-                handle
-            )
+            _load_avrt().AvRevertMmThreadCharacteristics(handle)
         finally:
             _thread_state.mmcss_handle = None
 

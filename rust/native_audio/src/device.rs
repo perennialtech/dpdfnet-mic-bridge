@@ -1,4 +1,4 @@
-use std::os::raw::c_ulong;
+use std::os::raw::{c_int, c_ulong, c_void};
 use std::ptr;
 
 use pyo3::prelude::*;
@@ -246,7 +246,7 @@ pub fn check_full_duplex_stream_settings(
             samplerate as f64,
             block_size as c_ulong,
             ffi::PA_CLIP_OFF | ffi::PA_DITHER_OFF,
-            None,
+            Some(probe_callback),
             ptr::null_mut(),
         )
     };
@@ -310,6 +310,20 @@ fn check_settings(
         "PortAudio rejected {direction_name} settings: device={device_id}, channels={channels}, samplerate={samplerate}, dtype={dtype}: {}",
         ffi::error_text(error)
     )))
+}
+
+// The runtime uses callback streams. A blocking probe rejects callback-only
+// backends such as JACK even when the runtime route is supported.
+unsafe extern "C" fn probe_callback(
+    _input: *const c_void,
+    _output: *mut c_void,
+    _frames: c_ulong,
+    _time: *const ffi::PaStreamCallbackTimeInfo,
+    _flags: ffi::PaStreamCallbackFlags,
+    _user: *mut c_void,
+) -> c_int {
+    // Probe streams are opened and closed, never started.
+    ffi::PA_ABORT
 }
 
 fn device_info(device_id: i32) -> PyResult<ffi::PaDeviceInfo> {

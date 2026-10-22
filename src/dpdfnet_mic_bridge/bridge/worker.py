@@ -11,8 +11,10 @@ from typing import Any
 import numpy as np
 
 from ..realtime_env.errors import RealtimeSetupError
-from ..realtime_env.threading import (close_thread_realtime_context,
-                                      configure_realtime_worker_thread)
+from ..realtime_env.threading import (
+    close_thread_realtime_context,
+    configure_realtime_worker_thread,
+)
 from ..realtime_env.types import RuntimeTuningRequest, ThreadTuningResult
 
 

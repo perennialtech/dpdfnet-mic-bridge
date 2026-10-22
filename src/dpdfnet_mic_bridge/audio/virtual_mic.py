@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import platform
-import shutil
+import json
+import re
+import shlex
 import subprocess
 import time
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from .inventory import query_audio_inventory
+from .clients import client_environment, client_path
 
 LINUX_VIRTUAL_MIC_SINK_NAME = "dpdfnet_mic_bridge"
 LINUX_VIRTUAL_MIC_SINK_DESCRIPTION = "DPDFNet_Mic_Bridge"
-LINUX_VIRTUAL_MIC_SOURCE_NAME = f"{LINUX_VIRTUAL_MIC_SINK_NAME}.monitor"
-LINUX_VIRTUAL_MIC_SOURCE_DESCRIPTION = (
-    f"Monitor of {LINUX_VIRTUAL_MIC_SINK_DESCRIPTION}"
-)
+LINUX_VIRTUAL_MIC_SOURCE_DESCRIPTION = "DPDFNet_Mic"
 
 _VIRTUAL_MIC_VISIBILITY_TIMEOUT_SECONDS = 5.0
 
@@ -28,6 +28,7 @@ class LinuxVirtualMic:
 
     render_name: str
     capture_name: str
+    module_ids: tuple[str, ...] = ()
 
 
 def _first_line(text: str) -> str:
@@ -46,6 +47,7 @@ def _run_checked(
             capture_output=True,
             text=True,
             timeout=3.0,
+            env=client_environment(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"{operation} failed: {exc}") from exc
@@ -59,12 +61,12 @@ def _run_checked(
     return completed
 
 
-def _load_virtual_mic_module(pactl: str) -> list[str]:
+def _load_virtual_mic_module(pactl: str, sink_name: str, on_created=None) -> list[str]:
     sink_command = (
         pactl,
         "load-module",
         "module-null-sink",
-        f"sink_name={LINUX_VIRTUAL_MIC_SINK_NAME}",
+        f"sink_name={sink_name}",
         f"sink_properties=device.description={LINUX_VIRTUAL_MIC_SINK_DESCRIPTION}",
         "channels=1",
         "channel_map=mono",
@@ -87,11 +89,15 @@ def _load_virtual_mic_module(pactl: str) -> list[str]:
         pactl,
         "load-module",
         "module-remap-source",
-        f"master={LINUX_VIRTUAL_MIC_SOURCE_NAME}",
-        f"source_name={LINUX_VIRTUAL_MIC_SINK_NAME}_capture",
-        f"source_properties=device.description={LINUX_VIRTUAL_MIC_SINK_DESCRIPTION}_Capture",
+        f"master={sink_name}.monitor",
+        f"source_name={sink_name}_capture",
+        f"source_properties=device.description={LINUX_VIRTUAL_MIC_SOURCE_DESCRIPTION}",
+        "channels=1",
+        "channel_map=mono",
     )
     try:
+        if on_created:
+            on_created(tuple(modules))
         completed2 = _run_checked(
             source_command,
             operation="Could not create the Linux virtual microphone capture source",
@@ -99,36 +105,61 @@ def _load_virtual_mic_module(pactl: str) -> list[str]:
         module_id2 = completed2.stdout.strip()
         if module_id2.isdecimal():
             modules.append(module_id2)
+            if on_created:
+                on_created(tuple(modules))
+        else:
+            raise RuntimeError("The capture source returned an invalid module ID.")
     except Exception:
-        # If the remap fails, fall back to just the monitor source
-        pass
+        cleanup_owned_endpoint(sink_name, modules)
+        raise
 
     return modules
 
 
-def _virtual_sink_is_visible() -> bool:
-    inventory = query_audio_inventory()
-    for item in inventory.devices:
-        if int(item.get("max_output_channels", 0)) < 1:
-            continue
+def pulse_list(kind: str) -> list[dict]:
+    if kind == "modules":
+        # Some pactl releases omit module IDs in JSON. The tab-separated short
+        # form includes IDs on both PulseAudio and PipeWire-Pulse servers.
+        result = _run_checked(
+            (client_path("pactl"), "list", "short", "modules"),
+            operation="Could not check virtual microphone module ownership",
+        )
+        modules = []
+        for line in result.stdout.splitlines():
+            fields = line.split("\t", 3)
+            if len(fields) < 2 or not fields[0].isdecimal():
+                # Native PipeWire modules can print multiline argument blocks;
+                # continuation lines do not identify a module to unload.
+                continue
+            modules.append(
+                {
+                    "index": int(fields[0]),
+                    "name": fields[1],
+                    "argument": fields[2] if len(fields) > 2 else "",
+                }
+            )
+        return modules
+    result = _run_checked(
+        (client_path("pactl"), "--format=json", "list", kind),
+        operation="Could not query the desktop audio session. Start PulseAudio or PipeWire's PulseAudio service",
+    )
+    items = json.loads(result.stdout)
+    if not isinstance(items, list):
+        raise RuntimeError("The audio server returned an invalid endpoint list.")
+    return items
 
-        name = str(item.get("name", "")).casefold().replace(" ", "_")
-        if (
-            LINUX_VIRTUAL_MIC_SINK_NAME.casefold() in name
-            or LINUX_VIRTUAL_MIC_SINK_DESCRIPTION.casefold() in name
-        ):
-            return True
 
-    return False
-
-
-def _wait_for_virtual_sink() -> None:
+def _wait_for_virtual_sink(sink_name: str) -> None:
     deadline = time.monotonic() + _VIRTUAL_MIC_VISIBILITY_TIMEOUT_SECONDS
     last_error: Exception | None = None
 
     while time.monotonic() < deadline:
         try:
-            if _virtual_sink_is_visible():
+            sinks = pulse_list("sinks")
+            sources = pulse_list("sources")
+            if any(item["name"] == sink_name for item in sinks) and any(
+                item["name"] == f"{sink_name}_capture" for item in sources
+            ):
                 return
         except Exception as exc:
             last_error = exc
@@ -141,64 +172,80 @@ def _wait_for_virtual_sink() -> None:
             detail = f"\nLast inventory error: {text}"
 
     raise RuntimeError(
-        "The Linux virtual microphone was created, but its render sink did not "
-        "appear in PortAudio within 5 seconds.\n"
-        "Make sure PortAudio and pactl are connected to the same PipeWire or "
-        "PulseAudio session."
+        "The audio server did not expose both virtual microphone endpoints within 5 seconds.\n"
+        "A PulseAudio-compatible desktop audio session with remap-source support is required."
         f"{detail}"
     )
 
 
 def _unload_virtual_mic_module(pactl: str, module_ids: list[str]) -> None:
+    failures = []
     for module_id in reversed(module_ids):
         try:
-            subprocess.run(
+            _run_checked(
                 (pactl, "unload-module", module_id),
-                capture_output=True,
-                text=True,
-                timeout=3.0,
+                operation=f"Could not remove owned audio module {module_id}",
             )
-        except (OSError, subprocess.SubprocessError):
-            pass
+        except RuntimeError as exc:
+            failures.append(str(exc))
+    if failures:
+        raise RuntimeError("\n".join(failures))
+
+
+def cleanup_owned_endpoint(sink: str, module_ids: list[str]) -> None:
+    """Recover after a stuck child; never unload a reused, unrelated module ID."""
+    if not re.fullmatch(r"dpdfnet_mic_bridge_[0-9a-f]{32}", sink):
+        raise ValueError("Invalid owned endpoint name")
+    modules = {str(item["index"]): item for item in pulse_list("modules")}
+    owned = []
+    for module_id in module_ids:
+        module = modules.get(str(module_id))
+        if module is None:
+            continue
+        arguments = shlex.split(module.get("argument", ""))
+        if (
+            module["name"] == "module-null-sink" and f"sink_name={sink}" in arguments
+        ) or (
+            module["name"] == "module-remap-source"
+            and f"master={sink}.monitor" in arguments
+            and f"source_name={sink}_capture" in arguments
+        ):
+            owned.append(str(module_id))
+    _unload_virtual_mic_module(client_path("pactl"), owned)
 
 
 @contextmanager
 def managed_linux_virtual_mic(
     *,
     enabled: bool,
+    on_created=None,
 ) -> Iterator[LinuxVirtualMic | None]:
     """
-    Create a render sink and app-facing monitor source for an automatic route.
+    Create and verify an owned render sink and a real app-facing capture source.
 
-    The sink is created before PortAudio device selection and its visibility is
-    verified before execution continues. Normal context exit unloads the module
-    and removes both endpoints.
+    Unique server names isolate simultaneous runs and pre-existing user modules.
+    A monitor-only fallback is not a successful virtual microphone setup.
     """
     if platform.system() != "Linux" or not enabled:
         yield None
         return
 
-    pactl = shutil.which("pactl")
-    if pactl is None:
-        raise RuntimeError(
-            "Automatic Linux virtual microphone creation requires `pactl`.\n"
-            "Install the PulseAudio client utilities for your distribution; "
-            "they also work with PipeWire's PulseAudio-compatible server. "
-            "Alternatively, create a virtual microphone yourself and pin its "
-            "render endpoint with --output."
-        )
+    pactl = client_path("pactl")
+    sink_name = f"{LINUX_VIRTUAL_MIC_SINK_NAME}_{uuid.uuid4().hex}"
 
-    module_ids = _load_virtual_mic_module(pactl)
+    def notify(module_ids):
+        if on_created:
+            on_created(
+                LinuxVirtualMic(sink_name, f"{sink_name}_capture", tuple(module_ids))
+            )
+
+    module_ids = _load_virtual_mic_module(pactl, sink_name, notify)
     try:
-        _wait_for_virtual_sink()
-        capture_name = (
-            f"{LINUX_VIRTUAL_MIC_SINK_DESCRIPTION}_Capture"
-            if len(module_ids) > 1
-            else LINUX_VIRTUAL_MIC_SOURCE_DESCRIPTION
-        )
+        _wait_for_virtual_sink(sink_name)
         yield LinuxVirtualMic(
-            render_name=LINUX_VIRTUAL_MIC_SINK_DESCRIPTION,
-            capture_name=capture_name,
+            render_name=sink_name,
+            capture_name=f"{sink_name}_capture",
+            module_ids=tuple(module_ids),
         )
     finally:
-        _unload_virtual_mic_module(pactl, module_ids)
+        cleanup_owned_endpoint(sink_name, module_ids)

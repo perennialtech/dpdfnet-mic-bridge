@@ -6,14 +6,14 @@ import argparse
 import dataclasses
 import platform
 import sys
+import threading
 import time
-
-import dpdfnet
 
 from .. import _native_audio
 from ..audio.inventory import query_audio_inventory
 from ..audio.stderr import silence_native_stderr
 from ..audio.virtual_mic import managed_linux_virtual_mic
+from ..models.loading import load_enhancer
 from ..realtime_env.runtime import RealtimeRuntimeManager
 from ..realtime_env.types import RuntimeTuningRequest
 from .config import build_run_config
@@ -106,7 +106,18 @@ def _native_stats_warning_lines(stats: dict) -> list[str]:
     return lines
 
 
-def run_bridge(args: argparse.Namespace) -> int:
+def run_bridge(
+    args: argparse.Namespace, stop_event=None, on_ready=None, on_endpoints=None
+) -> int:
+    stop_event = stop_event or threading.Event()
+    if platform.system() == "Linux" and args.output is None:
+        from .pulse_runner import run_pulse_bridge
+
+        return run_pulse_bridge(args, stop_event, on_ready, on_endpoints)
+    if getattr(args, "source", None) is not None:
+        raise ValueError(
+            "--source is only available for the automatic Linux PulseAudio route."
+        )
     if platform.system() not in ("Windows", "Linux"):
         _eprint(
             "[note] This script is primarily intended for Windows 10/11 and Linux PipeWire systems. It may still work elsewhere, but that is not the supported target."
@@ -203,19 +214,17 @@ def run_bridge(args: argparse.Namespace) -> int:
         print("Loading model...")
         model_start = time.perf_counter()
         try:
-            enhancer = dpdfnet.StreamEnhancer(
-                model=config.model_name, verbose=bool(args.verbose)
-            )
+            enhancer = load_enhancer(config.model_name, verbose=bool(args.verbose))
         except Exception as exc:
             detail = _first_line(str(exc)) or type(exc).__name__
             raise RuntimeError(
                 f"Could not load DPDFNet model '{config.model_name}'.\n"
-                "If the model has not been downloaded yet, run:\n"
-                f"  dpdfnet download {config.model_name}\n"
                 f"Details: {detail}"
             ) from exc
         model_elapsed = time.perf_counter() - model_start
         print(f"Model ready ({model_elapsed:.2f}s).")
+        if stop_event.is_set():
+            return 0
 
         memory_result = realtime.lock_memory_after_model_load()
         realtime.strict_raise_if_needed(memory_result, "memory locking")
@@ -244,6 +253,7 @@ def run_bridge(args: argparse.Namespace) -> int:
             f"max={float(capacity['max_seconds']) * 1000.0:.2f}ms "
             f"rtf={float(capacity['rtf']):.2f}"
         )
+        enhancer.reset()
 
         engine_config = _native_audio.AudioEngineConfig(
             config.sample_rate,
@@ -284,11 +294,13 @@ def run_bridge(args: argparse.Namespace) -> int:
             worker_started = True
 
             print("Streaming. Ctrl+C stops.")
+            if on_ready:
+                on_ready()
             print()
 
             next_metrics_print = 0.0
 
-            while True:
+            while not stop_event.is_set():
                 worker_failure = enhancement_worker.failure
                 if worker_failure is not None:
                     stream_error = RuntimeError(

@@ -7,14 +7,18 @@ import platform
 import shlex
 import sys
 
-from ..audio.hostapi import (HOSTAPI_FILTER_DISPLAY_NAMES,
-                             hostapi_filter_key_for_name,
-                             resolve_list_hostapi_filter)
+from ..audio.hostapi import (
+    HOSTAPI_FILTER_DISPLAY_NAMES,
+    hostapi_filter_key_for_name,
+    resolve_list_hostapi_filter,
+)
 from ..audio.inventory import query_audio_inventory
 from ..audio.probing import build_device_probes
-from ..audio.selection import (is_likely_virtual_bridge_output,
-                               is_viable_auto_input_candidate,
-                               suggest_run_pair)
+from ..audio.selection import (
+    is_likely_virtual_bridge_output,
+    is_viable_auto_input_candidate,
+    suggest_run_pair,
+)
 from ..audio.types import DeviceProbe
 from ..models.registry import DEFAULT_MODEL, model_native_sample_rate
 
@@ -147,7 +151,7 @@ def _print_next_steps(
         print()
         print(
             "No bridge output is visible. Running without --output creates "
-            "'DPDFNet_Mic_Bridge' for the bridge and 'DPDFNet_Mic_Bridge_Capture' for apps."
+            "a private playback sink and 'DPDFNet_Mic' for apps."
         )
 
     print()
@@ -155,6 +159,15 @@ def _print_next_steps(
 
 
 def devices_command(args: argparse.Namespace) -> int:
+    if platform.system() == "Linux" and args.hostapi is None and not args.all_apis:
+        from ..audio.pulse import microphones
+
+        print("PulseAudio-compatible microphone sources")
+        for item in microphones():
+            print(f"  [{item['index']}] {item.get('description', item['name'])}")
+        print("Use --input <id>, or choose a microphone in the desktop window.")
+        print("The bridge creates DPDFNet_Mic automatically; do not select an output.")
+        return 0
     probe_sample_rate = model_native_sample_rate(args.model)
 
     if platform.system() not in ("Windows", "Linux"):

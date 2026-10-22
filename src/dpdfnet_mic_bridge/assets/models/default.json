@@ -1,0 +1,12 @@
+{
+  "name": "dpdfnet8_48khz_hr",
+  "filename": "dpdfnet8_48khz_hr.onnx",
+  "revision": "dd6818d00f50c836fed43a6243ebe49116de5964",
+  "url": "https://huggingface.co/Ceva-IP/DPDFNet/resolve/dd6818d00f50c836fed43a6243ebe49116de5964/onnx/dpdfnet8_48khz_hr.onnx",
+  "sha256": "7b3afbb260a08fe9af3d16e3bda992971be1e7e951d1dee7c2d235f5c43f5631",
+  "size": 14857107,
+  "license": "Apache-2.0",
+  "license_source": "https://huggingface.co/Ceva-IP/DPDFNet/blob/dd6818d00f50c836fed43a6243ebe49116de5964/README.md",
+  "card_url": "https://huggingface.co/Ceva-IP/DPDFNet/raw/dd6818d00f50c836fed43a6243ebe49116de5964/README.md",
+  "card_sha256": "2c4866591f488f690d6997969f313a32c93b107ac1c2dc84984513601f122af3"
+}

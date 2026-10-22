@@ -1,7 +1,8 @@
 import os
 
-from dpdfnet_mic_bridge.realtime_env.backend_latency import \
-    probe_backend_latency_context
+from dpdfnet_mic_bridge.realtime_env.backend_latency import (
+    probe_backend_latency_context,
+)
 
 
 def test_pipewire_latency_env_is_restored(monkeypatch):

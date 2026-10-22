@@ -9,8 +9,7 @@ from ..audio.hostapi import hostapi_filter_key_for_name
 from ..audio.tags import has_bridge_output_tags
 from ..models.registry import DEFAULT_MODEL
 from ..realtime_env.types import RuntimeTuningResult
-from .config import DEFAULT_LATENCY
-from .types import RunConfig
+from .types import DEFAULT_LATENCY, RunConfig
 
 
 def print_run_summary(

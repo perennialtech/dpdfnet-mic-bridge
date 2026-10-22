@@ -13,14 +13,11 @@ from ..audio.probing import negotiate_full_duplex_channels
 from ..audio.route_validation import validate_backend_route
 from ..audio.tags import infer_device_tags
 from ..models.registry import model_native_sample_rate
-from .device_selection import (get_current_run_device_info,
-                               resolve_run_device_selection)
+from .device_selection import get_current_run_device_info, resolve_run_device_selection
 from .types import RunConfig
 
 if TYPE_CHECKING:
     from ..realtime_env.runtime import RealtimeRuntimeManager
-
-DEFAULT_LATENCY = "high"
 
 
 def build_run_config(

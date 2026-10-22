@@ -5,14 +5,21 @@ from __future__ import annotations
 import math
 import os
 import platform
+import sys
 from contextlib import contextmanager
 from types import TracebackType
 from typing import Iterator
 
 from ..audio.hostapi import hostapi_filter_key_for_name
-from . import linux
-from .types import (AppliedAction, RealtimeMode, RuntimeTuningRequest,
-                    RuntimeTuningResult)
+
+if sys.platform == "linux":
+    from . import linux
+from .types import (
+    AppliedAction,
+    RealtimeMode,
+    RuntimeTuningRequest,
+    RuntimeTuningResult,
+)
 
 
 @contextmanager
