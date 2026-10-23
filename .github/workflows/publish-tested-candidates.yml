@@ -58,10 +58,14 @@ jobs:
           github-token: ${{ github.token }}
           pattern: sources-and-notices-*
           path: source-materials
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.13.4"
+      - run: uv python install 3.12.13
       - name: Assemble source materials and SHA-256 checksums
         run: |
-          python3 packaging/prepare_release_sources.py
-          python3 packaging/checksums.py
+          uv run --no-project --python 3.12.13 python packaging/prepare_release_sources.py
+          uv run --no-project --python 3.12.13 python packaging/checksums.py
           ls -lh release
           sha256sum --check release/SHA256SUMS
       - name: Publish release
