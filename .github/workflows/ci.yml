@@ -163,8 +163,10 @@ jobs:
           path: source-materials
       - name: Prepare source materials and checksums
         run: |
+          if ! command -v zstd >/dev/null; then sudo apt-get update && sudo apt-get install -y zstd; fi
           uv run --no-project python packaging/prepare_release_sources.py
           uv run --no-project python packaging/checksums.py
+          (cd release && sha256sum --check SHA256SUMS)
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

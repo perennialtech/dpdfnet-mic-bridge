@@ -1,43 +1,121 @@
-"""Keep shared source archives once; archive small notices and Rust sources."""
+"""Bundle corresponding third-party sources without flooding GitHub Releases.
+
+Input: source-materials/sources-and-notices-{Linux,Windows}/ (CI artifacts).
+Output: three archives in release/; no modification of application binaries.
+"""
+
+from __future__ import annotations
 
 import hashlib
 from pathlib import Path
 import shutil
+import subprocess
 import tarfile
 
-root = Path("source-materials")
-release = Path("release")
-with tarfile.open(
-    release / "third-party-notices-and-rust-sources.tar.gz", "w:gz"
-) as archive:
-    for directory in sorted(root.iterdir()):
-        notices = directory / "notices"
-        if notices.is_dir():
-            archive.add(notices, arcname=directory.name + "/notices")
-    rust_added = False
-    for directory in sorted(root.rglob("third-party-sources")):
-        for source in sorted(directory.iterdir()):
-            if source.is_dir():
-                if source.name == "rust-crates" and not rust_added:
-                    archive.add(source, arcname="rust-crates")
-                    rust_added = True
-                continue
-            if source.stat().st_size >= 2_000_000_000:
-                raise RuntimeError(
-                    f"Source asset exceeds GitHub's asset size limit: {source}"
-                )
-            target = release / source.name
-            if target.exists():
-                with source.open("rb") as left, target.open("rb") as right:
-                    if (
-                        hashlib.file_digest(left, "sha256").digest()
-                        != hashlib.file_digest(right, "sha256").digest()
-                    ):
-                        # Platform-specific source manifests can have the same
-                        # filename but different contents. Retain both.
-                        target = release / f"{directory.parent.name}-{source.name}"
-                        if target.exists():
-                            raise RuntimeError(f"Conflicting source asset: {target}")
-                        shutil.copy2(source, target)
+SOURCE_ROOT = Path("source-materials")
+RELEASE = Path("release")
+MAX_ASSET_SIZE = 2_000_000_000
+
+
+def add_zstd_archive(destination: Path, entries: list[tuple[Path, str]]) -> None:
+    """Stream tar into fast zstd compression, avoiding a second huge disk copy."""
+    zstd = shutil.which("zstd")
+    if zstd is None:
+        raise RuntimeError("zstd is required to bundle corresponding sources")
+    process = subprocess.Popen(
+        [zstd, "-T2", "-1", "-q", "-o", str(destination)],
+        stdin=subprocess.PIPE,
+    )
+    try:
+        assert process.stdin is not None
+        with tarfile.open(fileobj=process.stdin, mode="w|") as archive:
+            for path, name in entries:
+                archive.add(path, arcname=name, recursive=True)
+    finally:
+        assert process.stdin is not None
+        process.stdin.close()
+    if process.wait() != 0:
+        raise RuntimeError(f"zstd failed to create {destination}")
+    check_size(destination)
+
+
+def check_size(path: Path) -> None:
+    if not path.is_file() or not 0 < path.stat().st_size < MAX_ASSET_SIZE:
+        raise RuntimeError(f"Invalid or oversized GitHub release asset: {path}")
+
+
+def same_file(left: Path, right: Path) -> bool:
+    if left.stat().st_size != right.stat().st_size:
+        return False
+
+    def digest(path: Path) -> bytes:
+        with path.open("rb") as f:
+            return hashlib.file_digest(f, "sha256").digest()
+
+    return digest(left) == digest(right)
+
+
+def main() -> None:
+    RELEASE.mkdir(parents=True, exist_ok=True)
+    platforms = {
+        platform: SOURCE_ROOT / f"sources-and-notices-{platform}"
+        for platform in ("Linux", "Windows")
+    }
+    if any(not p.is_dir() for p in platforms.values()):
+        raise RuntimeError(f"Expected Linux and Windows source materials: {platforms}")
+
+    qt: dict[str, Path] = {}
+    qt_metadata: list[tuple[Path, str]] = []
+    ubuntu: list[tuple[Path, str]] = []
+    notices: list[tuple[Path, str]] = []
+    rust_sources: Path | None = None
+    for platform, base in platforms.items():
+        notice_dir = base / "notices"
+        if not notice_dir.is_dir():
+            raise RuntimeError(f"Missing license notices: {notice_dir}")
+        notices.append((notice_dir, f"{platform}/notices"))
+        source_dir = base / "third-party-sources"
+        if not source_dir.is_dir():
+            raise RuntimeError(f"Missing corresponding sources: {source_dir}")
+        for source in sorted(source_dir.iterdir()):
+            if source.name == "rust-crates" and source.is_dir():
+                if rust_sources is None:
+                    rust_sources = source
+            elif source.name == "qt-sources.json":
+                qt_metadata.append((source, f"qt/manifests/{platform}-qt-sources.json"))
+            elif source.name.startswith(
+                ("qt-everywhere-src-", "pyside-setup-everywhere-src-")
+            ):
+                existing = qt.setdefault(source.name, source)
+                if existing != source and not same_file(existing, source):
+                    raise RuntimeError(f"Conflicting Qt source archive: {source.name}")
+            elif platform == "Linux":
+                ubuntu.append((source, f"ubuntu/{source.name}"))
             else:
-                shutil.copy2(source, target)
+                notices.append((source, f"Windows/other-sources/{source.name}"))
+    if rust_sources is None:
+        raise RuntimeError("Missing Rust crate source bundle")
+    notices.append((rust_sources, "rust-crates"))
+    if (
+        not qt_metadata
+        or not any(n.startswith("qt-everywhere-src-") for n in qt)
+        or not any(n.startswith("pyside-setup-everywhere-src-") for n in qt)
+    ):
+        raise RuntimeError("Qt corresponding sources or manifests are incomplete")
+    if not ubuntu:
+        raise RuntimeError("Ubuntu corresponding source materials are missing")
+
+    add_zstd_archive(
+        RELEASE / "qt-corresponding-sources.tar.zst",
+        [(p, f"qt/{n}") for n, p in sorted(qt.items())] + qt_metadata,
+    )
+    add_zstd_archive(RELEASE / "ubuntu-corresponding-sources.tar.zst", ubuntu)
+    notice_bundle = RELEASE / "third-party-notices-and-rust-sources.tar.gz"
+    with tarfile.open(notice_bundle, "w:gz", compresslevel=1) as archive:
+        for source, name in notices:
+            archive.add(source, arcname=name)
+    check_size(notice_bundle)
+
+
+if __name__ == "__main__":
+    main()

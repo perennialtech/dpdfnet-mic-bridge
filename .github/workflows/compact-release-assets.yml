@@ -1,0 +1,104 @@
+name: Compact existing release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing public release tag
+        required: true
+        type: string
+      successful_run_id:
+        description: Successful Windows/Linux CI run containing source materials
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  compact:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Verify release and unchanged application and build inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          RUN_ID: ${{ inputs.successful_run_id }}
+        run: |
+          set -euo pipefail
+          test "$TAG" = "v$(sed -n 's/^version = "\([^" ]*\)"/\1/p' pyproject.toml | head -1)"
+          gh release view "$TAG" >/dev/null
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .conclusion)" = success
+          candidate_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)"
+          # Bundles use only the packaging helper changed since the successful build.
+          git diff --exit-code "$candidate_sha" HEAD -- . \
+            ':(exclude).github' ':(exclude)README.md' ':(exclude)CONTRIBUTING.md' \
+            ':(exclude)packaging/sign_windows.ps1' ':(exclude)packaging/prepare_release_sources.py' \
+            ':(exclude)packaging/prune_release_assets.py'
+          git diff --exit-code "refs/tags/$TAG^{commit}" HEAD -- . \
+            ':(exclude).github' ':(exclude)README.md' ':(exclude)CONTRIBUTING.md' \
+            ':(exclude)packaging/prepare_release_sources.py' ':(exclude)packaging/prune_release_assets.py'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          run-id: ${{ inputs.successful_run_id }}
+          github-token: ${{ github.token }}
+          pattern: sources-and-notices-*
+          path: source-materials
+      - name: Download original binaries and checksums (never rebuild them)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          mkdir -p release
+          gh release download "$TAG" -p '*.AppImage' -p '*-setup.exe' -p SHA256SUMS -D release
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          paths = sorted(p for p in Path('release').iterdir() if p.name.endswith(('.AppImage', '-setup.exe')))
+          assert len(paths) == 2, f'Expected exactly two released binaries, got {paths}'
+          old = dict(line.split('  ', 1) for line in Path('release/SHA256SUMS').read_text().splitlines())
+          for p in paths:
+              with p.open('rb') as f:
+                  digest = hashlib.sha256()
+                  for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                      digest.update(chunk)
+                  assert digest.hexdigest() == old[p.name], f'Original binary checksum mismatch: {p}'
+          print('Both original release binaries match their previously published SHA-256 checksums.')
+          PY
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.13.4"
+      - run: uv python install 3.12.13
+      - name: Build and verify just three source archives and new checksums
+        run: |
+          if ! command -v zstd >/dev/null; then sudo apt-get update && sudo apt-get install -y zstd; fi
+          uv run --no-project --python 3.12.13 python packaging/prepare_release_sources.py
+          uv run --no-project --python 3.12.13 python packaging/checksums.py
+          (cd release && sha256sum --check SHA256SUMS)
+          ls -lh release/
+      - name: Upload replacement archives and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          for file in release/qt-corresponding-sources.tar.zst \
+                      release/ubuntu-corresponding-sources.tar.zst \
+                      release/third-party-notices-and-rust-sources.tar.gz \
+                      release/SHA256SUMS; do
+            for attempt in 1 2 3; do
+              if gh release upload "$TAG" "$file" --clobber; then break; fi
+              if [ "$attempt" = 3 ]; then exit 1; fi
+              sleep 15
+            done
+          done
+      - name: Verify replacements before deleting old source attachments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: uv run --no-project --python 3.12.13 python packaging/prune_release_assets.py "$TAG" "$GITHUB_REPOSITORY"

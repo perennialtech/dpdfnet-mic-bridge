@@ -106,5 +106,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, source installation,
 tests, packaging, and release checks. The application is MIT licensed;
 dependencies and model weights have their own licenses. See the
 [third-party notices](packaging/THIRD_PARTY_NOTICES.md) and each release's bundled
-`notices` directory. Upstream model information is available from
+`notices` directory. Source downloads are bundled into Qt, Ubuntu client-library,
+and third-party notices/Rust source archives rather than individual package files.
+Upstream model information is available from
 [Ceva's DPDFNet project](https://github.com/ceva-ip/DPDFNet).

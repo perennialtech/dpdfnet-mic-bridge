@@ -64,6 +64,7 @@ jobs:
       - run: uv python install 3.12.13
       - name: Assemble source materials and SHA-256 checksums
         run: |
+          if ! command -v zstd >/dev/null; then sudo apt-get update && sudo apt-get install -y zstd; fi
           uv run --no-project --python 3.12.13 python packaging/prepare_release_sources.py
           uv run --no-project --python 3.12.13 python packaging/checksums.py
           ls -lh release
