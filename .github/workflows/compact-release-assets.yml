@@ -61,7 +61,7 @@ jobs:
           import hashlib
           paths = sorted(p for p in Path('release').iterdir() if p.name.endswith(('.AppImage', '-setup.exe')))
           assert len(paths) == 2, f'Expected exactly two released binaries, got {paths}'
-          old = dict(line.split('  ', 1) for line in Path('release/SHA256SUMS').read_text().splitlines())
+          old = {name: digest for digest, name in (line.split('  ', 1) for line in Path('release/SHA256SUMS').read_text().splitlines())}
           for p in paths:
               with p.open('rb') as f:
                   digest = hashlib.sha256()
