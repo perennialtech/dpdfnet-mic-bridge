@@ -62,6 +62,13 @@ jobs:
             build/third-party-sources/qt-everywhere-src-*.tar.xz
             build/third-party-sources/pyside-setup-everywhere-src-*.tar.xz
           key: qt-sources-linux-v1-${{ hashFiles('packaging/qt-sources.json') }}
+      - name: Cache extracted Qt licence notices (Linux)
+        if: runner.os == 'Linux'
+        id: qt-notices-linux
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: build/qt-notices
+          key: qt-notices-linux-v1-${{ hashFiles('packaging/qt-sources.json', 'packaging/stage_qt_notices.py') }}
       - name: Cache extracted Qt license notices (Windows)
         if: runner.os == 'Windows'
         id: qt-notices
@@ -76,9 +83,10 @@ jobs:
       - name: Stage pinned model and corresponding Qt sources
         env:
           QT_NOTICES_CACHE_HIT: ${{ steps.qt-notices.outputs.cache-hit }}
+          QT_LINUX_NOTICES_CACHE_HIT: ${{ steps.qt-notices-linux.outputs.cache-hit }}
         run: |
           uv run --no-project python packaging/stage_model.py
-          if [[ "$RUNNER_OS" == Windows && "$QT_NOTICES_CACHE_HIT" == true ]]; then
+          if [[ "$QT_NOTICES_CACHE_HIT" == true || "$QT_LINUX_NOTICES_CACHE_HIT" == true ]]; then
             # Qt sources are retained once, in the Linux source artifact.
             mkdir -p build/third-party-sources
             cp packaging/qt-sources.json build/third-party-sources/qt-sources.json

@@ -17,6 +17,12 @@ runs:
       if: runner.os == 'Linux'
       shell: bash
       run: |
+        # Azure-hosted Ubuntu images can point apt at an intermittently slow
+        # mirror list. Use the official HTTPS archive for this CI runner.
+        sudo sed -i \
+          -e 's|mirror+file:/etc/apt/apt-mirrors.txt|https://archive.ubuntu.com/ubuntu|g' \
+          -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+          /etc/apt/sources.list
         sudo apt-get update
         sudo apt-get install -y pkg-config portaudio19-dev pulseaudio-utils pulseaudio libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libfuse2
     - name: Restore pinned Windows PortAudio libraries
