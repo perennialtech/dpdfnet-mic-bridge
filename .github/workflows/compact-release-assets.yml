@@ -39,10 +39,10 @@ jobs:
           git diff --exit-code "$candidate_sha" HEAD -- . \
             ':(exclude).github' ':(exclude)README.md' ':(exclude)CONTRIBUTING.md' \
             ':(exclude)packaging/sign_windows.ps1' ':(exclude)packaging/prepare_release_sources.py' \
-            ':(exclude)packaging/prune_release_assets.py'
+            ':(exclude)packaging/prune_release_assets.py' ':(exclude)tests/test_source_archives.py'
           git diff --exit-code "refs/tags/$TAG^{commit}" HEAD -- . \
             ':(exclude).github' ':(exclude)README.md' ':(exclude)CONTRIBUTING.md' \
-            ':(exclude)packaging/prepare_release_sources.py' ':(exclude)packaging/prune_release_assets.py'
+            ':(exclude)packaging/prepare_release_sources.py' ':(exclude)packaging/prune_release_assets.py' ':(exclude)tests/test_source_archives.py'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           run-id: ${{ inputs.successful_run_id }}
