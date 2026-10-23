@@ -20,7 +20,7 @@ Get the package for your platform from [GitHub Releases](https://github.com/pere
 
 Use only the compatibility claims and test results recorded for that release.
 CI artifacts are candidates, not evidence of real audio hardware testing.
-Windows PR candidates are unsigned; tagged releases require signing.
+Windows installers are unsigned and may trigger SmartScreen warnings.
 
 ### Windows
 
@@ -34,8 +34,8 @@ installing the driver, click **Refresh**. The bridge writes to `CABLE Input`;
 your calling app records from `CABLE Output`.
 
 The bridge does not bundle, install, or uninstall VB-CABLE, which other apps may
-also use. Code signing identifies a publisher but does not guarantee that
-Windows SmartScreen will never show a warning.
+also use. The installer is unsigned; Windows may warn about an unknown publisher or
+unrecognised application.
 
 ### Linux
 
@@ -103,7 +103,7 @@ described in [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Source builds and licenses
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, source installation,
-tests, packaging, signing, and release checks. The application is MIT licensed;
+tests, packaging, and release checks. The application is MIT licensed;
 dependencies and model weights have their own licenses. See the
 [third-party notices](packaging/THIRD_PARTY_NOTICES.md) and each release's bundled
 `notices` directory. Upstream model information is available from

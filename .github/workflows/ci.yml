@@ -44,7 +44,6 @@ jobs:
       matrix:
         os: [ubuntu-22.04, windows-2022]
     runs-on: ${{ matrix.os }}
-    environment: ${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'build' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/build-environment
@@ -56,7 +55,7 @@ jobs:
         run: |
           uv run --no-project python packaging/stage_model.py
           uv run --no-project python packaging/stage_qt_notices.py
-      - name: Install release environment
+      - name: Install packaging dependencies
         run: uv sync --locked --no-dev --group bundle --no-editable
       - name: Verify wheel contents
         run: |
@@ -99,13 +98,6 @@ jobs:
           $gui = Start-Process dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge.exe -ArgumentList "_desktop-ui-test" -PassThru
           if (-not $gui.WaitForExit(30000)) { $gui.Kill(); throw "Windowed desktop smoke test timed out" }
           if ($gui.ExitCode -ne 0) { throw "Windowed desktop smoke test failed" }
-      - name: Sign Windows application executables
-        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        env:
-          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
-          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
-        run: ./packaging/sign_windows.ps1 -Files @("dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge.exe", "dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge-cli.exe")
       - name: Build Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
@@ -118,13 +110,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed" }
           $installer = (Get-ChildItem release/*-setup.exe).FullName
           ./packaging/check_windows_install.ps1 -Installer $installer
-      - name: Sign Windows installer
-        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        env:
-          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
-          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
-        run: ./packaging/sign_windows.ps1 -Files @((Get-ChildItem release/*-setup.exe).FullName)
       - name: Build and test Linux AppImage
         if: runner.os == 'Linux'
         shell: bash
@@ -159,7 +144,6 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: package
     runs-on: ubuntu-22.04
-    environment: release
     permissions:
       contents: write
     steps:
@@ -181,7 +165,7 @@ jobs:
         run: |
           uv run --no-project python packaging/prepare_release_sources.py
           uv run --no-project python packaging/checksums.py
-      - name: Create draft GitHub Release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --draft --title "DPDFNet Mic Bridge ${GITHUB_REF_NAME#v}" --generate-notes --notes "Windows x64 installer and Linux x86-64 AppImage include the default CPU model. VB-CABLE is a separate Windows prerequisite; Linux needs a PulseAudio-compatible desktop session. Publish only after completing the clean-machine and license checklist in CONTRIBUTING.md."
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "DPDFNet Mic Bridge ${GITHUB_REF_NAME#v}" --generate-notes --notes "Windows x64 installer (unsigned) and Linux x86-64 AppImage include the default CPU model. Windows may display SmartScreen warnings. VB-CABLE is a separate Windows prerequisite; Linux needs a PulseAudio-compatible desktop session. CI tests are not a substitute for real hardware compatibility testing. See CONTRIBUTING.md for licensing and verification information."

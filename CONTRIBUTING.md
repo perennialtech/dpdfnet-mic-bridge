@@ -104,7 +104,7 @@ It uses **onedir**, not onefile. Keep all of `dist/dpdfnet-mic-bridge/`, includi
 executable for diagnostics and child processes. Test `--help`, `self-test`, and
 `_desktop-ui-test` before creating the final package.
 
-## Windows installer and signing
+## Windows installer
 
 Use the Inno Setup version pinned in CI:
 
@@ -115,13 +115,8 @@ iscc /DAppVersion=0.1.0 packaging/dpdfnet-mic-bridge.iss
 The installer writes the application under the current user's Programs directory
 and adds a Start menu shortcut and uninstaller. It never manages VB-CABLE.
 CI tests installation, upgrade, offline inference, and uninstall in a path with
-spaces. Sign both application executables before building the installer, then
-sign the final installer with timestamping.
-
-`packaging/sign_windows.ps1` requires Windows SDK `signtool`, a base64 PFX in
-`WINDOWS_SIGNING_CERTIFICATE`, and its password in `WINDOWS_SIGNING_PASSWORD`.
-Use a suitable hardware-backed signing service instead when your certificate
-cannot be exported. Configure secrets in a protected GitHub `release` environment.
+spaces. The Windows installer and executables are distributed unsigned. Windows may
+show an unknown-publisher or SmartScreen warning.
 
 ## Linux AppImage
 
@@ -141,13 +136,12 @@ local development check, not evidence of Ubuntu compatibility.
 ## Release workflow and gates
 
 PRs run Windows/Linux tests and package unsigned candidates. A tag matching
-`v<project.version>` requires Windows signing secrets. Protect the GitHub
-`release` environment with human approval. Only the release job has
+`v<project.version>` builds unsigned packages. Only the release job has
 `contents: write`; it uploads packages, checksums, sources, and notices to a
-**draft** GitHub Release.
+GitHub Release.
 
-Record these checks before publishing the draft. Signing credentials, legal
-review, and hardware tests cannot be replaced by hosted CI.
+Review the following before claiming production compatibility. Legal review
+and real-hardware tests cannot be replaced by hosted CI.
 
 - Audit Python/Rust licenses, Qt third-party attributions, native libraries,
   model licensing, and corresponding sources. The weights' Apache-2.0 declaration
@@ -159,9 +153,8 @@ review, and hardware tests cannot be replaced by hosted CI.
   fetched from Launchpad and checked against their exact source descriptors.
   Review wheel-bundled native components
   too; a list of license names is not sufficient.
-- Verify timestamped Windows signatures and final checksums. Do not bundle
-  VB-CABLE without permission, invent silent driver switches, or uninstall its
-  shared driver with the bridge.
+- Verify final checksums. Do not bundle VB-CABLE without permission, invent
+  silent driver switches, or uninstall its shared driver with the bridge.
 - Test clean Windows 10/11 x64 without Python/build tools, with and without
   VB-CABLE: both WASAPI endpoints, physical microphones, real streaming, paths
   with spaces, shutdown, upgrades, and uninstall.
@@ -174,8 +167,8 @@ review, and hardware tests cannot be replaced by hosted CI.
   child, window closure, and simultaneous runs. Remove only endpoints owned by
   that run; preserve existing user audio endpoints.
 
-Publish through GitHub's draft release controls after review. No Flatpak or GPU
-support is implied by these artifacts.
+Tagged CI publishes a GitHub Release automatically after successful tests and
+packaging. No Flatpak or GPU support is implied by these artifacts.
 
 ## Advanced audio and CLI controls
 
