@@ -35,7 +35,7 @@ with tarfile.open(
                     ):
                         # Platform-specific source manifests can have the same
                         # filename but different contents. Retain both.
-                        target = release / f"{directory.name}-{source.name}"
+                        target = release / f"{directory.parent.name}-{source.name}"
                         if target.exists():
                             raise RuntimeError(f"Conflicting source asset: {target}")
                         shutil.copy2(source, target)
