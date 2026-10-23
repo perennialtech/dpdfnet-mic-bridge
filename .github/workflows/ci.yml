@@ -111,7 +111,13 @@ jobs:
         # A degraded Ubuntu mirror previously stalled this step for 144 minutes.
         timeout-minutes: 20
         run: |
-          sed -n 's/^deb /deb-src /p' /etc/apt/sources.list | sudo tee /etc/apt/sources.list.d/dpdfnet-source-packages.list
+          # Ubuntu's Azure runner image uses a mirror+file URL which may
+          # repeatedly stall while fetching source archives. Resolve only the
+          # deb-src entries to the official HTTPS Ubuntu archive instead.
+          sed -n 's/^deb /deb-src /p' /etc/apt/sources.list |
+            sed -e 's|mirror+file:/etc/apt/apt-mirrors.txt|https://archive.ubuntu.com/ubuntu|g' \
+                -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' |
+            sudo tee /etc/apt/sources.list.d/dpdfnet-source-packages.list
           sudo apt-get update
           uv run --no-sync python packaging/stage_native_sources.py
       - name: Frozen Linux checks with empty caches and no network
