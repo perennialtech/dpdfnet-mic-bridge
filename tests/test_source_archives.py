@@ -12,7 +12,10 @@ import pytest
 
 
 @pytest.mark.skipif(shutil.which("zstd") is None, reason="zstd not available")
-def test_source_archives_are_bundled_without_modifying_binaries(tmp_path: Path) -> None:
+@pytest.mark.parametrize("qt_archives_on_windows", [True, False])
+def test_source_archives_are_bundled_without_modifying_binaries(
+    tmp_path: Path, qt_archives_on_windows: bool
+) -> None:
     for platform in ("Linux", "Windows"):
         base = tmp_path / "source-materials" / f"sources-and-notices-{platform}"
         notice_dir = base / "notices"
@@ -21,8 +24,13 @@ def test_source_archives_are_bundled_without_modifying_binaries(tmp_path: Path) 
         sources = base / "third-party-sources"
         (sources / "rust-crates").mkdir(parents=True)
         (sources / "rust-crates" / "LICENSE.txt").write_text("Rust")
-        (sources / "qt-everywhere-src-6.10.2.tar.xz").write_bytes(b"Qt")
-        (sources / "pyside-setup-everywhere-src-6.10.2.tar.xz").write_bytes(b"PySide")
+        # CI may omit the duplicate Qt source archives from the Windows
+        # artifact. Both layouts must produce exactly one Qt source bundle.
+        if platform == "Linux" or qt_archives_on_windows:
+            (sources / "qt-everywhere-src-6.10.2.tar.xz").write_bytes(b"Qt")
+            (sources / "pyside-setup-everywhere-src-6.10.2.tar.xz").write_bytes(
+                b"PySide"
+            )
         (sources / "qt-sources.json").write_text(f"{platform} manifest")
         if platform == "Linux":
             (sources / "libalsa.dsc").write_text("Ubuntu source")
