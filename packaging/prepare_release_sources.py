@@ -33,8 +33,11 @@ with tarfile.open(
                         hashlib.file_digest(left, "sha256").digest()
                         != hashlib.file_digest(right, "sha256").digest()
                     ):
-                        raise RuntimeError(
-                            f"Different source artifacts share a name: {source.name}"
-                        )
+                        # Platform-specific source manifests can have the same
+                        # filename but different contents. Retain both.
+                        target = release / f"{directory.name}-{source.name}"
+                        if target.exists():
+                            raise RuntimeError(f"Conflicting source asset: {target}")
+                        shutil.copy2(source, target)
             else:
                 shutil.copy2(source, target)
