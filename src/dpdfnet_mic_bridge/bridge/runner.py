@@ -19,7 +19,7 @@ from ..realtime_env.types import RuntimeTuningRequest
 from .config import build_run_config
 from .device_selection import get_current_run_device_info, list_devices_handoff
 from .summary import print_block_tuning_next_step, print_run_summary
-from .worker import EnhancementWorker, measure_model_realtime_capacity
+from .worker import EnhancementWorker
 
 
 def _eprint(*args: object) -> None:
@@ -228,32 +228,6 @@ def run_bridge(
 
         memory_result = realtime.lock_memory_after_model_load()
         realtime.strict_raise_if_needed(memory_result, "memory locking")
-
-        capacity = measure_model_realtime_capacity(
-            enhancer,
-            sample_rate=config.sample_rate,
-            block_size=config.block_size,
-            jitter_blocks=2,
-        )
-        if not bool(capacity["ok"]):
-            raise RuntimeError(
-                "DPDFNet inference is too slow for this route.\n"
-                f"Average: {float(capacity['avg_seconds']) * 1000.0:.2f} ms, "
-                f"max: {float(capacity['max_seconds']) * 1000.0:.2f} ms, "
-                f"block deadline: {float(capacity['block_seconds']) * 1000.0:.2f} ms, "
-                f"jitter budget: {float(capacity['budget_seconds']) * 1000.0:.2f} ms, "
-                f"RTF: {float(capacity['rtf']):.2f}, "
-                f"deadline misses: {int(capacity['deadline_misses'])}.\n"
-                "Use a faster model, a faster CPU/GPU path, or reduce other system load."
-            )
-
-        print(
-            "Model timing "
-            f"avg={float(capacity['avg_seconds']) * 1000.0:.2f}ms "
-            f"max={float(capacity['max_seconds']) * 1000.0:.2f}ms "
-            f"rtf={float(capacity['rtf']):.2f}"
-        )
-        enhancer.reset()
 
         engine_config = _native_audio.AudioEngineConfig(
             config.sample_rate,

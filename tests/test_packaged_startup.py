@@ -1,6 +1,8 @@
 import subprocess
 import sys
 
+import pytest
+
 from dpdfnet_mic_bridge.app import main
 from dpdfnet_mic_bridge.cli.parser import build_parser
 
@@ -36,8 +38,13 @@ def test_realtime_is_off_for_ordinary_launch():
     assert build_parser().parse_args(["run"]).realtime == "off"
 
 
-def test_self_test_parser():
-    assert build_parser().parse_args(["self-test"]).command == "self-test"
+def test_removed_self_test_command_is_rejected(capsys):
+    parser = build_parser()
+    assert "self-test" not in parser.format_help()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["self-test"])
+    assert exc.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_live_runner_imports_before_device_setup():

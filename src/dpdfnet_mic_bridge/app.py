@@ -51,10 +51,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             from .realtime_env.cli import realtime_command
 
             return realtime_command(args)
-        if args.command == "self-test":
-            from .self_test import run_self_test
-
-            return run_self_test()
     except KeyboardInterrupt:
         text = str(sys.exc_info()[1]).strip("\n")
         if text:

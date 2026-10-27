@@ -32,13 +32,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{desktop,run,devices,self-test,realtime}",
+        metavar="{desktop,run,devices,realtime}",
     )
 
     subparsers.add_parser("desktop", help="open the microphone bridge window")
-    subparsers.add_parser(
-        "self-test", help="test bundled-model inference offline without audio devices"
-    )
 
     list_parser = subparsers.add_parser(
         "devices",

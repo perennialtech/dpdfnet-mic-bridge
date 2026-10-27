@@ -66,10 +66,8 @@ confirm both VB-CABLE endpoints appear in Windows sound settings. On Linux,
 confirm the desktop audio session permits null sinks and remapped capture
 sources. A monitor-only fallback is not accepted as successful setup.
 
-Startup checks whether your CPU can process the model in real time. Close other
-CPU-heavy applications if it cannot keep up. The package does not claim CUDA/GPU
-support. Audio is processed as mono: microphone channels are downmixed rather
-than preserved as stereo. There is no beamforming, channel selector, automatic
+The package does not claim CUDA/GPU support. Audio is processed as mono:
+microphone channels are downmixed rather than preserved as stereo. There is no beamforming, channel selector, automatic
 gain control, or separate limiter policy.
 
 Application files and the default model are read-only runtime assets. Numba's
@@ -83,15 +81,12 @@ On Windows, use `dpdfnet-mic-bridge-cli.exe` in the installation directory for
 terminal commands. On Linux, pass commands to the AppImage:
 
 ```sh
-./dpdfnet-mic-bridge-0.2.0-linux-x86_64.AppImage self-test
 ./dpdfnet-mic-bridge-0.2.0-linux-x86_64.AppImage devices
 ./dpdfnet-mic-bridge-0.2.0-linux-x86_64.AppImage run --input 15
 ```
 
-`self-test` processes synthetic audio through the bundled model without opening
-microphones or using the network. Replace `15` with a current microphone ID from
-`devices`. Linux IDs refer to PulseAudio sources; Windows IDs refer to native
-PortAudio/WASAPI devices. IDs can change after reconnecting a device or restarting
+Replace `15` with a current microphone ID from `devices`. Linux IDs refer to
+PulseAudio sources; Windows IDs refer to native PortAudio/WASAPI devices. IDs can change after reconnecting a device or restarting
 the audio session. Stop a terminal stream with `Ctrl+C`.
 
 The basic view uses only the bundled model. Advanced users can supply other

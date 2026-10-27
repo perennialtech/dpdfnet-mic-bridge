@@ -46,14 +46,11 @@ uv run --no-sync pytest -q
 uv run --no-sync ruff check src tests packaging
 uv run --no-sync black --check src tests packaging
 uv run --no-sync python -m dpdfnet_mic_bridge --help
-uv run --no-sync python -m dpdfnet_mic_bridge self-test
 ```
 
 Unit tests do not need physical microphones or modify audio-server settings.
-Qt tests use the offscreen platform. `self-test` requires staged weights, blocks
-Python network connections, and runs synthetic audio through the CPU model.
-Frozen Linux CI also disables OS networking with a network namespace. Hosted
-runners do not establish real microphone/driver compatibility.
+Qt tests use the offscreen platform. Hosted runners do not establish real
+microphone/driver compatibility.
 
 After freezing, run `uv run --no-sync python packaging/audio_smoke.py
 dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge` for opt-in Linux integration testing.
@@ -101,7 +98,7 @@ uv run --no-sync python -m PyInstaller --clean --noconfirm packaging/dpdfnet-mic
 The spec requires assets and notices and fails on missing required metadata.
 It uses **onedir**, not onefile. Keep all of `dist/dpdfnet-mic-bridge/`, including
 `_internal`; never ship only the executable. Windows also provides a console
-executable for diagnostics and child processes. Test `--help`, `self-test`, and
+executable for diagnostics and child processes. Test `--help` and
 `_desktop-ui-test` before creating the final package.
 
 ## Windows installer
@@ -114,7 +111,7 @@ iscc /DAppVersion=0.2.0 packaging/dpdfnet-mic-bridge.iss
 
 The installer writes the application under the current user's Programs directory
 and adds a Start menu shortcut and uninstaller. It never manages VB-CABLE.
-CI tests installation, upgrade, offline inference, and uninstall in a path with
+CI tests installation, upgrade, command startup, and uninstall in a path with
 spaces. The Windows installer and executables are distributed unsigned. Windows may
 show an unknown-publisher or SmartScreen warning.
 

@@ -12,7 +12,6 @@ from ..models.loading import load_enhancer
 from ..models.registry import model_native_sample_rate
 from ..realtime_env.runtime import RealtimeRuntimeManager
 from ..realtime_env.types import RuntimeTuningRequest
-from .worker import measure_model_realtime_capacity
 
 
 def run_pulse_bridge(
@@ -33,14 +32,6 @@ def run_pulse_bridge(
         realtime.strict_raise_if_needed(
             realtime.lock_memory_after_model_load(), "memory locking"
         )
-        capacity = measure_model_realtime_capacity(
-            enhancer, sample_rate=rate, block_size=block_size
-        )
-        if not capacity["ok"]:
-            raise RuntimeError(
-                f"This CPU cannot process the model in real time (RTF {capacity['rtf']:.2f}). Close other CPU-heavy applications and retry."
-            )
-        enhancer.reset()
         if stop.is_set():
             return 0
         with managed_linux_virtual_mic(

@@ -137,22 +137,19 @@ jobs:
             sudo tee /etc/apt/sources.list.d/dpdfnet-source-packages.list
           sudo apt-get update
           uv run --no-sync python packaging/stage_native_sources.py
-      - name: Frozen Linux checks with empty caches and no network
+      - name: Frozen Linux startup checks
         if: runner.os == 'Linux'
         shell: bash
         run: |
           dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge --help
-          unshare --user --map-root-user --net env XDG_CACHE_HOME="$RUNNER_TEMP/empty-cache" dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge self-test
           dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge _desktop-ui-test
-      - name: Frozen Windows checks with empty caches
+      - name: Frozen Windows startup checks
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "empty-cache"
           & dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge-cli.exe --help
           if ($LASTEXITCODE -ne 0) { throw "Frozen help failed" }
-          & dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge-cli.exe self-test
-          if ($LASTEXITCODE -ne 0) { throw "Frozen inference failed" }
           & dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge-cli.exe _desktop-ui-test
           if ($LASTEXITCODE -ne 0) { throw "Frozen desktop failed" }
           $gui = Start-Process dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge.exe -ArgumentList "_desktop-ui-test" -PassThru
@@ -176,7 +173,6 @@ jobs:
         run: |
           uv run --no-sync python packaging/build_appimage.py
           APPIMAGE_EXTRACT_AND_RUN=1 release/*.AppImage --help
-          unshare --user --map-root-user --net env APPIMAGE_EXTRACT_AND_RUN=1 XDG_CACHE_HOME="$RUNNER_TEMP/appimage-empty-cache" release/*.AppImage self-test
           APPIMAGE_EXTRACT_AND_RUN=1 release/*.AppImage _desktop-ui-test
       - name: Synthetic Linux audio integration test
         if: runner.os == 'Linux'
