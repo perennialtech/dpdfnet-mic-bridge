@@ -38,6 +38,8 @@ class BridgeWindow(QMainWindow):
         self.mode = ""
         self.forced = False
         self.worker_failed = False
+        self.inference_degraded = False
+        self._notification_processes = set()
         self.status = QLabel("Looking for microphones…")
         self.tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -126,6 +128,7 @@ class BridgeWindow(QMainWindow):
         self.endpoint = None
         self.stopping = self.forced = False
         self.worker_failed = False
+        self.inference_degraded = False
         self.status.setText("Loading model and starting audio…")
         self.spawn(
             "worker",
@@ -174,7 +177,8 @@ class BridgeWindow(QMainWindow):
                     else "Choose an available microphone and complete audio setup, then Refresh."
                 )
             elif message.get("event") == "ready" and not self.stopping:
-                self.status.setText("Streaming enhanced microphone audio.")
+                if not self.inference_degraded:
+                    self.status.setText("Streaming enhanced microphone audio.")
             elif message.get("event") == "endpoints":
                 self.endpoint = message
             elif (
@@ -183,35 +187,76 @@ class BridgeWindow(QMainWindow):
                 and not self.stopping
             ):
                 if message.get("state") == "degraded":
+                    if self.inference_degraded:
+                        continue
+                    self.inference_degraded = True
                     self.status.setText(
-                        "Inference is slower than real time; audio may stutter."
+                        "Inference is missing audio deadlines; your microphone may stutter."
                     )
                     self.notify_overload()
                 elif message.get("state") == "healthy":
+                    self.inference_degraded = False
                     self.status.setText("Streaming enhanced microphone audio.")
 
     def notify_overload(self):
         title = "DPDFNet Mic Bridge"
-        detail = "Inference cannot keep up with real-time audio. Your microphone may stutter."
+        detail = "Inference is missing audio deadlines; your microphone may stutter."
         if platform.system() == "Linux":
-            # The standard desktop notification service works without a tray
-            # icon (notably on GNOME). Keep the status label as a fallback.
-            notifier = QProcess()
+            # Observe the exit status asynchronously. Successful process launch
+            # does not mean the desktop notification server accepted the request.
+            notifier = QProcess(self)
             notifier.setProgram("notify-send")
             notifier.setArguments(["--app-name=DPDFNet Mic Bridge", title, detail])
             env = QProcessEnvironment.systemEnvironment()
             if getattr(sys, "frozen", False):
-                # Host notification tools must not load PyInstaller's private libraries.
                 original = env.value("LD_LIBRARY_PATH_ORIG")
                 if original:
                     env.insert("LD_LIBRARY_PATH", original)
                 else:
                     env.remove("LD_LIBRARY_PATH")
             notifier.setProcessEnvironment(env)
-            if notifier.startDetached():
-                return
+            self._notification_processes.add(notifier)
+            notifier.finished.connect(
+                lambda code, status, process=notifier: self._notification_finished(
+                    process, code, status
+                )
+            )
+            notifier.errorOccurred.connect(
+                lambda error, process=notifier: self._complete_notification(
+                    process, False
+                )
+            )
+            notifier.start()
+            QTimer.singleShot(
+                3000, lambda process=notifier: self._notification_timeout(process)
+            )
+            return
+        self._notification_fallback(title, detail)
+
+    def _notification_fallback(self, title, detail):
         if self.tray is not None:
             self.tray.showMessage(title, detail, QSystemTrayIcon.MessageIcon.Warning)
+
+    def _notification_finished(self, process, code, status):
+        self._complete_notification(
+            process, code == 0 and status == QProcess.ExitStatus.NormalExit
+        )
+
+    def _notification_timeout(self, process):
+        if process in self._notification_processes:
+            process.kill()
+            self._complete_notification(process, False)
+
+    def _complete_notification(self, process, succeeded):
+        if process not in self._notification_processes:
+            return
+        self._notification_processes.remove(process)
+        if not succeeded:
+            self._notification_fallback(
+                "DPDFNet Mic Bridge",
+                "Inference is missing audio deadlines; your microphone may stutter.",
+            )
+        process.deleteLater()
 
     def process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
@@ -273,6 +318,13 @@ class BridgeWindow(QMainWindow):
                 self.process.kill()
             event.ignore()
         else:
+            # QTimer callbacks must never dereference a notifier destroyed
+            # alongside the closing window.
+            for notifier in tuple(self._notification_processes):
+                self._notification_processes.remove(notifier)
+                if notifier.state() != QProcess.ProcessState.NotRunning:
+                    notifier.kill()
+                notifier.deleteLater()
             event.accept()
 
 

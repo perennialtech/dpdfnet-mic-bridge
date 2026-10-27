@@ -292,6 +292,7 @@ def run_bridge(
                         break
 
                 native_stats = dict(engine.stats())
+                enhancement_worker.observe_output_faults(native_stats)
                 native_failure = _native_failure_from_stats(
                     native_stats,
                     realtime_mode=args.realtime,
