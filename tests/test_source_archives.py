@@ -27,8 +27,8 @@ def test_source_archives_are_bundled_without_modifying_binaries(
         # CI may omit the duplicate Qt source archives from the Windows
         # artifact. Both layouts must produce exactly one Qt source bundle.
         if platform == "Linux" or qt_archives_on_windows:
-            (sources / "qt-everywhere-src-6.10.2.tar.xz").write_bytes(b"Qt")
-            (sources / "pyside-setup-everywhere-src-6.10.2.tar.xz").write_bytes(
+            (sources / "qt-everywhere-src-6.12.0.tar.xz").write_bytes(b"Qt")
+            (sources / "pyside-setup-everywhere-src-6.12.0.tar.xz").write_bytes(
                 b"PySide"
             )
         (sources / "qt-sources.json").write_text(f"{platform} manifest")
@@ -38,8 +38,8 @@ def test_source_archives_are_bundled_without_modifying_binaries(
     release = tmp_path / "release"
     release.mkdir()
     binaries = [
-        release / "dpdfnet-mic-bridge-0.1.0-linux-x86_64.AppImage",
-        release / "dpdfnet-mic-bridge-0.1.0-windows-x64-setup.exe",
+        release / "dpdfnet-mic-bridge-0.2.0-linux-x86_64.AppImage",
+        release / "dpdfnet-mic-bridge-0.2.0-windows-x64-setup.exe",
     ]
     for path in binaries:
         path.write_bytes(path.name.encode())

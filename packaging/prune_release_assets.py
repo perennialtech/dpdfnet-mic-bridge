@@ -13,8 +13,8 @@ import subprocess
 import sys
 
 EXPECTED = {
-    "dpdfnet-mic-bridge-0.1.0-linux-x86_64.AppImage",
-    "dpdfnet-mic-bridge-0.1.0-windows-x64-setup.exe",
+    "dpdfnet-mic-bridge-0.2.0-linux-x86_64.AppImage",
+    "dpdfnet-mic-bridge-0.2.0-windows-x64-setup.exe",
     "qt-corresponding-sources.tar.zst",
     "ubuntu-corresponding-sources.tar.zst",
     "third-party-notices-and-rust-sources.tar.gz",
@@ -41,7 +41,7 @@ def main(tag: str, repo: str) -> None:
     if not tag.startswith("v"):
         raise RuntimeError(f"Refusing non-version tag {tag}")
     version = tag[1:]
-    expected = {name.replace("0.1.0", version) for name in EXPECTED}
+    expected = {name.replace("0.2.0", version) for name in EXPECTED}
     release_files = Path("release")
     uploaded = assets(
         repo, gh("api", f"repos/{repo}/releases/tags/{tag}", "--jq", ".id").strip()

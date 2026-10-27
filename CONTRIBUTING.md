@@ -109,7 +109,7 @@ executable for diagnostics and child processes. Test `--help`, `self-test`, and
 Use the Inno Setup version pinned in CI:
 
 ```powershell
-iscc /DAppVersion=0.1.0 packaging/dpdfnet-mic-bridge.iss
+iscc /DAppVersion=0.2.0 packaging/dpdfnet-mic-bridge.iss
 ```
 
 The installer writes the application under the current user's Programs directory
