@@ -8,16 +8,16 @@ license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
     "dpdfnet==0.6.0",
-    "numba>=0.65", # dpdfnet pulls librosa which pulls an ancient version of numba by default
-    "numpy>=2.4",
-    "PySide6-Essentials==6.10.2",
+    "numba>=0.68.0", # dpdfnet pulls librosa which pulls an ancient version of numba by default
+    "numpy>=2.5.4",
+    "PySide6-Essentials==6.12.0",
 ]
 
 [project.scripts]
 dpdfnet-mic-bridge = "dpdfnet_mic_bridge.app:main"
 
 [build-system]
-requires = ["maturin==1.14.1"]
+requires = ["maturin==1.15.0"]
 build-backend = "maturin"
 
 [tool.maturin]
@@ -28,6 +28,10 @@ python-source = "src"
 features = ["pyo3/extension-module"]
 include = [{ path = "src/dpdfnet_mic_bridge/assets/**/*", format = ["sdist", "wheel"] }]
 
+# Keep the lint rules used before Ruff 0.17 changed its defaults.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
 [tool.basedpyright]
 typeCheckingMode = "standard"
 
@@ -36,15 +40,15 @@ target-version = ["py312"]
 
 [dependency-groups]
 bundle = [
-    "patchelf==0.17.2.4; sys_platform == 'linux'",
-    "pyinstaller==6.21.0",
-    "pyinstaller-hooks-contrib==2026.6",
+    "patchelf==0.19.1.0; sys_platform == 'linux'",
+    "pyinstaller==6.22.3",
+    "pyinstaller-hooks-contrib==2026.9",
 ]
 dev = [
-    "basedpyright>=1.39.6",
-    "black>=26.5.1",
-    "isort>=8.0.1",
-    "mypy>=2.1.0",
-    "pytest>=9.0.0",
-    "ruff>=0.15.15",
+    "basedpyright>=1.40.2",
+    "black>=26.10.1",
+    "isort>=9.0.2",
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "ruff>=0.17.3",
 ]

@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Verify release and unchanged application and build inputs
@@ -43,7 +43,7 @@ jobs:
           git diff --exit-code "refs/tags/$TAG^{commit}" HEAD -- . \
             ':(exclude).github' ':(exclude)README.md' ':(exclude)CONTRIBUTING.md' \
             ':(exclude)packaging/prepare_release_sources.py' ':(exclude)packaging/prune_release_assets.py' ':(exclude)tests/test_source_archives.py'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           run-id: ${{ inputs.successful_run_id }}
           github-token: ${{ github.token }}
@@ -70,9 +70,9 @@ jobs:
                   assert digest.hexdigest() == old[p.name], f'Original binary checksum mismatch: {p}'
           print('Both original release binaries match their previously published SHA-256 checksums.')
           PY
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
-          version: "0.13.4"
+          version: "0.13.6"
       - run: uv python install 3.12.13
       - name: Build and verify just three source archives and new checksums
         run: |
