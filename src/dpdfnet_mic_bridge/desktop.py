@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from .desktop_process import child_command
+from . import vbcable
 
 
 class BridgeWindow(QMainWindow):
@@ -36,6 +37,7 @@ class BridgeWindow(QMainWindow):
         self.mode = ""
         self.forced = False
         self.worker_failed = False
+        self.vbcable_setup_launched = False
         self.status = QLabel("Looking for microphones…")
         self.microphones = QComboBox()
         self.refresh = QPushButton("Refresh")
@@ -55,6 +57,9 @@ class BridgeWindow(QMainWindow):
         self.driver.setWordWrap(True)
         self.driver.setOpenExternalLinks(True)
         self.driver.hide()
+        self.install_driver = QPushButton("Install VB-CABLE…")
+        self.install_driver.clicked.connect(self.install_vbcable)
+        self.install_driver.hide()
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(1500)
@@ -70,6 +75,7 @@ class BridgeWindow(QMainWindow):
         row.addWidget(self.refresh)
         layout.addLayout(row)
         layout.addWidget(self.driver)
+        layout.addWidget(self.install_driver)
         buttons = QHBoxLayout()
         buttons.addWidget(self.start)
         buttons.addWidget(self.stop)
@@ -122,6 +128,45 @@ class BridgeWindow(QMainWindow):
             ["_desktop-worker", "--device", str(self.microphones.currentData())],
         )
 
+    def install_vbcable(self):
+        if self.vbcable_setup_launched:
+            return
+        if vbcable.driver_installed():
+            QMessageBox.information(
+                self,
+                "VB-CABLE already installed",
+                "The VB-CABLE driver is already registered. Restart Windows, then Refresh. "
+                "The vendor setup may offer to remove an installed driver.",
+            )
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "Install VB-CABLE?",
+                "VB-CABLE is a separate donationware driver by VB-Audio (www.vb-cable.com). "
+                "All contributions are welcome. Its setup will request administrator "
+                "approval, and you must restart Windows after installation. Continue?",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        try:
+            vbcable.launch_setup()
+        except (OSError, RuntimeError) as exc:
+            QMessageBox.warning(self, "VB-CABLE installation", str(exc))
+            return
+        # The vendor setup can still be running when ShellExecuteW returns.
+        # Keep the action disabled for this session, even across Refresh.
+        self.vbcable_setup_launched = True
+        self.install_driver.hide()
+        QMessageBox.information(
+            self,
+            "VB-CABLE installer launched",
+            "Complete installation in the VB-Audio window, restart Windows, "
+            "then return here and click Refresh. DPDFNet Mic Bridge will never "
+            "uninstall this shared driver.",
+        )
+
     def stop_bridge(self):
         if self.process is None:
             return
@@ -154,7 +199,34 @@ class BridgeWindow(QMainWindow):
             if self.mode == "inventory" and "microphones" in message:
                 for item in message["microphones"]:
                     self.microphones.addItem(item["name"], item["key"])
-                self.driver.setVisible(not message["driver_ready"])
+                missing_driver = (
+                    platform.system() == "Windows" and not message["driver_ready"]
+                )
+                self.driver.setVisible(missing_driver)
+                self.install_driver.hide()
+                if missing_driver:
+                    if vbcable.driver_installed():
+                        self.driver.setText(
+                            "VB-CABLE is registered but its audio endpoints are missing. "
+                            "Restart Windows, check Sound settings, then Refresh. "
+                            '<a href="https://vb-audio.com/Cable/">VB-Audio support</a>.'
+                        )
+                    else:
+                        self.driver.setText(
+                            "VB-CABLE by VB-Audio is missing. It is donationware; "
+                            'all contributions are welcome. <a href="https://www.vb-cable.com">'
+                            "VB-Audio website</a>. Installation needs administrator "
+                            "approval and a restart."
+                        )
+                        if self.vbcable_setup_launched:
+                            self.driver.setText(
+                                "VB-CABLE setup was launched. Complete installation "
+                                "in the VB-Audio window, restart Windows, then Refresh."
+                            )
+                        self.install_driver.setVisible(
+                            not self.vbcable_setup_launched
+                            and vbcable.bundled_setup() is not None
+                        )
                 self.start.setEnabled(
                     bool(message["microphones"]) and message["driver_ready"]
                 )
