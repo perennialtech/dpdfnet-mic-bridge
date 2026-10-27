@@ -3,16 +3,16 @@ description: Set up pinned Python, uv, Rust and platform audio prerequisites
 runs:
   using: composite
   steps:
-    - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       with:
-        version: "0.13.4"
+        version: "0.13.6"
         enable-cache: true
     - name: Install pinned Python
       shell: bash
       run: uv python install "$UV_PYTHON"
     - name: Install pinned Rust
       shell: bash
-      run: rustup toolchain install 1.96.0 --profile minimal
+      run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
     - name: Install Linux audio build prerequisites
       if: runner.os == 'Linux'
       shell: bash
@@ -27,12 +27,12 @@ runs:
         sudo apt-get install -y pkg-config portaudio19-dev pulseaudio-utils pulseaudio libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libfuse2
     - name: Restore pinned Windows PortAudio libraries
       if: runner.os == 'Windows'
-      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ${{ runner.temp }}/dpdfnet-vcpkg/.vcpkg-root
           ${{ runner.temp }}/dpdfnet-vcpkg/installed
-        key: portaudio-vcpkg-windows-x64-bd8298ae219367a606c74c6c25dc50cc6d66eca8-v1
+        key: portaudio-vcpkg-windows-x64-d90cb72e90dc7ce9a38ee77c4cafa398a4e6a800-v1
     - name: Install pinned Windows PortAudio
       if: runner.os == 'Windows'
       shell: pwsh
@@ -44,7 +44,7 @@ runs:
         if (-not ((Test-Path $marker) -and (Test-Path $dll) -and (Test-Path $notice))) {
           git init $root
           git -C $root remote add origin https://github.com/microsoft/vcpkg.git
-          git -C $root fetch --depth 1 origin bd8298ae219367a606c74c6c25dc50cc6d66eca8
+          git -C $root fetch --depth 1 origin d90cb72e90dc7ce9a38ee77c4cafa398a4e6a800
           git -C $root switch --detach FETCH_HEAD
           & "$root\bootstrap-vcpkg.bat" -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }

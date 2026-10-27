@@ -22,7 +22,7 @@ jobs:
   publish:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
@@ -45,22 +45,22 @@ jobs:
             echo "Release $TAG already exists; refusing to overwrite." >&2
             exit 1
           fi
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           run-id: ${{ inputs.successful_run_id }}
           github-token: ${{ github.token }}
           pattern: package-*
           merge-multiple: true
           path: release
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           run-id: ${{ inputs.successful_run_id }}
           github-token: ${{ github.token }}
           pattern: sources-and-notices-*
           path: source-materials
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
-          version: "0.13.4"
+          version: "0.13.6"
       - run: uv python install 3.12.13
       - name: Assemble source materials and SHA-256 checksums
         run: |
