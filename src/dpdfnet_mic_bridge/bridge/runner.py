@@ -8,6 +8,7 @@ import platform
 import sys
 import threading
 import time
+from typing import Callable
 
 from .. import _native_audio
 from ..audio.inventory import query_audio_inventory
@@ -107,13 +108,17 @@ def _native_stats_warning_lines(stats: dict) -> list[str]:
 
 
 def run_bridge(
-    args: argparse.Namespace, stop_event=None, on_ready=None, on_endpoints=None
+    args: argparse.Namespace,
+    stop_event=None,
+    on_ready=None,
+    on_endpoints=None,
+    on_health: Callable[[str, float], None] | None = None,
 ) -> int:
     stop_event = stop_event or threading.Event()
     if platform.system() == "Linux" and args.output is None:
         from .pulse_runner import run_pulse_bridge
 
-        return run_pulse_bridge(args, stop_event, on_ready, on_endpoints)
+        return run_pulse_bridge(args, stop_event, on_ready, on_endpoints, on_health)
     if getattr(args, "source", None) is not None:
         raise ValueError(
             "--source is only available for the automatic Linux PulseAudio route."
@@ -249,6 +254,7 @@ def run_bridge(
             sample_rate=config.sample_rate,
             block_size=config.block_size,
             realtime_request=realtime.worker_request(),
+            on_health=on_health,
         )
 
         print("Starting native audio...")

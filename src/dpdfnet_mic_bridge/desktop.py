@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QStyle,
+    QSystemTrayIcon,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -37,6 +39,14 @@ class BridgeWindow(QMainWindow):
         self.forced = False
         self.worker_failed = False
         self.status = QLabel("Looking for microphones…")
+        self.tray = None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray = QSystemTrayIcon(
+                self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon),
+                self,
+            )
+            self.tray.setToolTip("DPDFNet Mic Bridge")
+            self.tray.show()
         self.microphones = QComboBox()
         self.refresh = QPushButton("Refresh")
         self.refresh.clicked.connect(self.discover)
@@ -167,6 +177,41 @@ class BridgeWindow(QMainWindow):
                 self.status.setText("Streaming enhanced microphone audio.")
             elif message.get("event") == "endpoints":
                 self.endpoint = message
+            elif (
+                message.get("event") == "inference_health"
+                and self.mode == "worker"
+                and not self.stopping
+            ):
+                if message.get("state") == "degraded":
+                    self.status.setText(
+                        "Inference is slower than real time; audio may stutter."
+                    )
+                    self.notify_overload()
+                elif message.get("state") == "healthy":
+                    self.status.setText("Streaming enhanced microphone audio.")
+
+    def notify_overload(self):
+        title = "DPDFNet Mic Bridge"
+        detail = "Inference cannot keep up with real-time audio. Your microphone may stutter."
+        if platform.system() == "Linux":
+            # The standard desktop notification service works without a tray
+            # icon (notably on GNOME). Keep the status label as a fallback.
+            notifier = QProcess()
+            notifier.setProgram("notify-send")
+            notifier.setArguments(["--app-name=DPDFNet Mic Bridge", title, detail])
+            env = QProcessEnvironment.systemEnvironment()
+            if getattr(sys, "frozen", False):
+                # Host notification tools must not load PyInstaller's private libraries.
+                original = env.value("LD_LIBRARY_PATH_ORIG")
+                if original:
+                    env.insert("LD_LIBRARY_PATH", original)
+                else:
+                    env.remove("LD_LIBRARY_PATH")
+            notifier.setProcessEnvironment(env)
+            if notifier.startDetached():
+                return
+        if self.tray is not None:
+            self.tray.showMessage(title, detail, QSystemTrayIcon.MessageIcon.Warning)
 
     def process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:

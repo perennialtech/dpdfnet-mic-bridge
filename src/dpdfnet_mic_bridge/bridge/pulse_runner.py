@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import threading
+import time
+from typing import Callable
 
 import numpy as np
 
@@ -12,16 +14,22 @@ from ..models.loading import load_enhancer
 from ..models.registry import model_native_sample_rate
 from ..realtime_env.runtime import RealtimeRuntimeManager
 from ..realtime_env.types import RuntimeTuningRequest
+from .health import InferenceHealth
 
 
 def run_pulse_bridge(
-    args, stop: threading.Event, on_ready=None, on_endpoints=None
+    args,
+    stop: threading.Event,
+    on_ready=None,
+    on_endpoints=None,
+    on_health: Callable[[str, float], None] | None = None,
 ) -> int:
     if args.input is not None and getattr(args, "source", None) is not None:
         raise ValueError("Choose either --input or --source, not both.")
     microphone = select_microphone(args.input, getattr(args, "source", None))
     rate = model_native_sample_rate(args.model)
     block_size = rate // 50
+    health = InferenceHealth() if on_health is not None else None
     print(f"Input: {microphone.get('description', microphone['name'])}", flush=True)
     print("Loading bundled model...", flush=True)
     with RealtimeRuntimeManager(RuntimeTuningRequest(mode=args.realtime)) as realtime:
@@ -50,7 +58,13 @@ def run_pulse_bridge(
                     block = np.frombuffer(raw, dtype="<f4").copy()
                     np.nan_to_num(block, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
                     np.clip(block, -1, 1, out=block)
+                    start = time.perf_counter()
                     enhanced = enhancer.process(block, sample_rate=rate)
+                    elapsed = time.perf_counter() - start
+                    if health is not None and on_health is not None:
+                        transition = health.observe(elapsed, block_size / rate)
+                        if transition is not None:
+                            on_health(*transition)
                     if not enhanced.size:
                         continue
                     np.nan_to_num(enhanced, copy=False, nan=0.0, posinf=0.0, neginf=0.0)

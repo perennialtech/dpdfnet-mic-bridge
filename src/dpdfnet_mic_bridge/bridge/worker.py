@@ -6,7 +6,7 @@ import collections
 import math
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -16,6 +16,7 @@ from ..realtime_env.threading import (
     configure_realtime_worker_thread,
 )
 from ..realtime_env.types import RuntimeTuningRequest, ThreadTuningResult
+from .health import InferenceHealth
 
 
 class EnhancementWorker:
@@ -33,6 +34,7 @@ class EnhancementWorker:
         block_size: int,
         realtime_request: RuntimeTuningRequest | None = None,
         read_timeout_ms: int = 100,
+        on_health: Callable[[str, float], None] | None = None,
     ) -> None:
         self._engine = engine
         self._enhancer = enhancer
@@ -41,6 +43,8 @@ class EnhancementWorker:
         self._read_timeout_ms = read_timeout_ms
         self._block_seconds = float(block_size) / float(sample_rate)
         self._realtime_request = realtime_request or RuntimeTuningRequest(mode="off")
+        self._health = InferenceHealth() if on_health is not None else None
+        self._on_health = on_health
 
         self._input_buffer = np.empty(block_size, dtype=np.float32)
         self._silence_buffer = np.zeros(block_size, dtype=np.float32)
@@ -237,6 +241,10 @@ class EnhancementWorker:
         self._rolling_times.append(elapsed)
         if elapsed > self._block_seconds:
             self.deadline_misses += 1
+        if self._health is not None:
+            transition = self._health.observe(elapsed, self._block_seconds)
+            if transition is not None and self._on_health is not None:
+                self._on_health(*transition)
 
     def _copy_and_correct_output(self, output_block: np.ndarray) -> np.ndarray:
         if not output_block.flags.c_contiguous:

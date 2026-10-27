@@ -60,6 +60,10 @@ PulseAudio client utilities; installing `pactl` separately is not required.
 
 ## Troubleshooting
 
+The desktop window warns when inference is persistently slower than real-time audio.
+On Linux, system notifications use `notify-send` where available; the status
+message remains visible in the window if notifications are unavailable.
+
 Open **Show/hide diagnostics** to see startup and streaming errors. If a
 microphone is disconnected or renamed, stop and click **Refresh**. On Windows,
 confirm both VB-CABLE endpoints appear in Windows sound settings. On Linux,

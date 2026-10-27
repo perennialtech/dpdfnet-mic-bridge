@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 import platform
+import queue
 import signal
 import sys
 import threading
@@ -151,6 +152,31 @@ def internal_command(argv: list[str]) -> int:
             flush=True,
         )
 
+    # Audio workers only enqueue transitions; a separate thread writes IPC so
+    # notifications cannot block microphone capture or inference.
+    health_events: queue.SimpleQueue[tuple[str, float] | None] = queue.SimpleQueue()
+
+    def forward_health():
+        while (transition := health_events.get()) is not None:
+            state, rtf = transition
+            print(
+                json.dumps({"event": "inference_health", "state": state, "rtf": rtf}),
+                flush=True,
+            )
+
+    sender = threading.Thread(target=forward_health, name="desktop-health", daemon=True)
+    sender.start()
+
     from .bridge.runner import run_bridge
 
-    return run_bridge(args, stop, ready, endpoints)
+    try:
+        return run_bridge(
+            args,
+            stop,
+            ready,
+            endpoints,
+            lambda state, rtf: health_events.put((state, rtf)),
+        )
+    finally:
+        health_events.put(None)
+        sender.join(timeout=1)
