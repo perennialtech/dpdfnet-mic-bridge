@@ -421,3 +421,33 @@ def test_inventory_error_shows_details(monkeypatch):
     assert "device enumeration failed" in window.log.toPlainText()
     window.close()
     app.processEvents()
+
+
+def test_missing_vbcable_without_bundled_setup_links_to_vendor(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr("dpdfnet_mic_bridge.desktop.platform.system", lambda: "Windows")
+    monkeypatch.setattr(vbcable, "driver_installed", lambda: False)
+    monkeypatch.setattr(vbcable, "bundled_setup", lambda: None)
+    window = BridgeWindow()
+    window.mode = "inventory"
+    window.process = SimpleNamespace(
+        readAllStandardOutput=lambda: (
+            json.dumps(
+                {"microphones": [{"name": "Mic", "key": "1"}], "driver_ready": False}
+            )
+            + "\n"
+        ).encode()
+    )
+    window.read_output()
+    assert not window.start.isEnabled()
+    assert window.install_driver.isHidden()
+    assert "VB-Audio website" in window.driver.text()
+    assert "below" not in window.driver.text()
+    assert "Finish VB-CABLE setup" in window.status.text()
+    window.process = None
+    window.close()
+    app.processEvents()

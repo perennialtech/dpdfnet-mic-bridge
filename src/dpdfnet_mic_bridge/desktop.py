@@ -271,9 +271,9 @@ class BridgeWindow(QMainWindow):
                         )
                     else:
                         self.driver.setText(
-                            "VB-CABLE isn't installed. Install it below or visit the "
-                            '<a href="https://www.vb-cable.com">VB-Audio website</a>. '
-                            "Restart Windows after installing it."
+                            "VB-CABLE isn't installed. Install it, restart Windows, "
+                            "then click Refresh. "
+                            '<a href="https://www.vb-cable.com">VB-Audio website</a>.'
                         )
                         running = self.vbcable_setup_running()
                         if running:
