@@ -61,8 +61,8 @@ Mark the AppImage executable in your file manager, then open it. If FUSE is
 unavailable, open a terminal in the download directory and use:
 
 ```sh
-chmod +x dpdfnet-mic-bridge-0.2.0-linux-x86_64.AppImage
-./dpdfnet-mic-bridge-0.2.0-linux-x86_64.AppImage --appimage-extract-and-run
+chmod +x dpdfnet-mic-bridge-0.3.0-linux-x86_64.AppImage
+./dpdfnet-mic-bridge-0.3.0-linux-x86_64.AppImage --appimage-extract-and-run
 ```
 
 Replace the version with your downloaded filename. The image includes its
@@ -103,8 +103,8 @@ On Windows, use `dpdfnet-mic-bridge-cli.exe` in the installation directory for
 terminal commands. On Linux, pass commands to the AppImage:
 
 ```sh
-./dpdfnet-mic-bridge-0.2.0-linux-x86_64.AppImage devices
-./dpdfnet-mic-bridge-0.2.0-linux-x86_64.AppImage run --input 15
+./dpdfnet-mic-bridge-0.3.0-linux-x86_64.AppImage devices
+./dpdfnet-mic-bridge-0.3.0-linux-x86_64.AppImage run --input 15
 ```
 
 Replace `15` with a current microphone ID from `devices`. Linux IDs refer to
