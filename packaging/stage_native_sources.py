@@ -10,20 +10,38 @@ import shutil
 import subprocess
 import sys
 from urllib.parse import unquote, urlencode, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE = "https://api.launchpad.net/1.0/ubuntu/+archive/primary"
 
 
+TRUSTED_HOSTS = {"api.launchpad.net", "launchpad.net", "launchpadlibrarian.net"}
+
+
+def require_trusted_url(url: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in TRUSTED_HOSTS:
+        raise RuntimeError("Ubuntu publisher download redirected outside trusted HTTPS")
+
+
+class TrustedRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        require_trusted_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def request(url: str):
-    response = urlopen(
+    require_trusted_url(url)
+    response = build_opener(TrustedRedirectHandler()).open(
         Request(url, headers={"User-Agent": "dpdfnet-mic-bridge-release-builder"}),
         timeout=120,
     )
-    if urlsplit(response.geturl()).scheme != "https":
+    try:
+        require_trusted_url(response.geturl())
+    except RuntimeError:
         response.close()
-        raise RuntimeError("Ubuntu publisher download redirected outside HTTPS")
+        raise
     return response
 
 
@@ -129,9 +147,7 @@ def verify_cached_sources(packages: set[tuple[str, str]], destination: Path) -> 
     """Check cached sources against fresh Ubuntu-published descriptors."""
     accounted_for = set()
     for source, version in sorted(packages):
-        publication, _, descriptor, data, checksums = published_source_descriptor(
-            source, version
-        )
+        _, _, descriptor, data, checksums = published_source_descriptor(source, version)
         descriptor_path = destination / descriptor
         if not descriptor_path.is_file():
             raise RuntimeError(f"Missing cached source descriptor: {descriptor}")
@@ -151,8 +167,7 @@ def verify_cached_sources(packages: set[tuple[str, str]], destination: Path) -> 
         if provenance_path.exists():
             provenance = json.loads(provenance_path.read_text())
             if (
-                provenance.get("publication") != publication["self_link"]
-                or provenance.get("source") != source
+                provenance.get("source") != source
                 or provenance.get("version") != version
                 or provenance.get("descriptor_sha256")
                 != hashlib.sha256(data).hexdigest()
@@ -166,9 +181,7 @@ def verify_cached_sources(packages: set[tuple[str, str]], destination: Path) -> 
 
 
 def download_launchpad_sources(source: str, version: str, destination: Path) -> None:
-    publication, files, descriptor, data, expected = published_source_descriptor(
-        source, version
-    )
+    _, files, descriptor, data, expected = published_source_descriptor(source, version)
     destination.mkdir(parents=True, exist_ok=True)
     (destination / descriptor).write_bytes(data)
     for name, integrity in expected.items():
@@ -186,7 +199,6 @@ def download_launchpad_sources(source: str, version: str, destination: Path) -> 
                 temporary.unlink(missing_ok=True)
         verify_file(target, integrity)
     provenance = {
-        "publication": publication["self_link"],
         "source": source,
         "version": version,
         "descriptor_sha256": hashlib.sha256(data).hexdigest(),

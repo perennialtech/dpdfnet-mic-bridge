@@ -17,12 +17,14 @@ def helper(name):
     return module
 
 
-def mock_published_descriptor(module, monkeypatch, descriptor, status="Published"):
+def mock_published_descriptor(
+    module, monkeypatch, descriptor, status="Published", publication_id="123"
+):
     publication = {
         "distro_series_link": "https://api.launchpad.net/1.0/ubuntu/jammy",
         "source_package_name": "example",
         "source_package_version": "1:2.0-1",
-        "self_link": module.ARCHIVE + "/+sourcepub/123",
+        "self_link": module.ARCHIVE + f"/+sourcepub/{publication_id}",
     }
     descriptor_url = "https://launchpad.net/ubuntu/+archive/primary/+files/example.dsc"
     archive_url = (
@@ -116,10 +118,18 @@ def test_cached_ubuntu_sources_are_verified(tmp_path, monkeypatch):
     assert downloaded == [
         "https://launchpad.net/ubuntu/+archive/primary/+files/example.dsc"
     ]
-    record.write_text(record.read_text().replace("+sourcepub/123", "+sourcepub/999"))
+    # A source can be published in security and updates under different IDs.
+    # Existing records keep their earlier publication URL; the exact .dsc
+    # and archive checksums, not that URL, identify trustworthy source bytes.
+    mock_published_descriptor(module, monkeypatch, descriptor, publication_id="999")
+    module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    provenance = json.loads(record.read_text())
+    provenance["source"] = "not-example"
+    record.write_text(json.dumps(provenance))
     with pytest.raises(RuntimeError, match="provenance mismatch"):
         module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
-    record.write_text(record.read_text().replace("+sourcepub/999", "+sourcepub/123"))
+    provenance["source"] = "example"
+    record.write_text(json.dumps(provenance))
     extra = tmp_path / "EXTRA-UNVERIFIED"
     extra.write_text("not a corresponding source")
     with pytest.raises(RuntimeError, match="Unexpected cached source files"):
@@ -193,7 +203,59 @@ def test_publisher_redirect_must_remain_https(monkeypatch):
             return "http://launchpadlibrarian.net/example.dsc"
 
     response = RedirectedResponse(b"untrusted")
-    monkeypatch.setattr(module, "urlopen", lambda request, timeout: response)
-    with pytest.raises(RuntimeError, match="outside HTTPS"):
+
+    class FakeOpener:
+        def open(self, request, timeout):
+            return response
+
+    monkeypatch.setattr(module, "build_opener", lambda handler: FakeOpener())
+    with pytest.raises(RuntimeError, match="outside trusted HTTPS"):
         module.request("https://launchpad.net/example.dsc")
     assert response.closed
+
+
+def test_redirects_reject_insecure_intermediate_or_untrusted_host(monkeypatch):
+    module = helper("stage_native_sources")
+
+    class FakeOpener:
+        def __init__(self, handler):
+            self.handler = handler
+
+        def open(self, request, timeout):
+            # A safe first hop does not make an HTTP second hop safe.
+            first = self.handler.redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://launchpadlibrarian.net/first",
+            )
+            self.handler.redirect_request(
+                first,
+                None,
+                302,
+                "Found",
+                {},
+                "http://launchpadlibrarian.net/second",
+            )
+            raise AssertionError("Should reject the insecure intermediate hop")
+
+    monkeypatch.setattr(module, "build_opener", lambda handler: FakeOpener(handler))
+    with pytest.raises(RuntimeError, match="outside trusted HTTPS"):
+        module.request("https://launchpad.net/ubuntu/source.dsc")
+
+    handler = module.TrustedRedirectHandler()
+    for url in (
+        "https://attacker.example/source.dsc",
+        "http://launchpadlibrarian.net/source.dsc",
+    ):
+        with pytest.raises(RuntimeError, match="outside trusted HTTPS"):
+            handler.redirect_request(
+                module.Request("https://launchpad.net/ubuntu/source.dsc"),
+                None,
+                302,
+                "Found",
+                {},
+                url,
+            )
