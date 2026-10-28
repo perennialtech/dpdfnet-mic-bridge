@@ -1,4 +1,7 @@
 import os
+import sys
+
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -53,10 +56,23 @@ def test_health_events_update_status_and_notify_once(monkeypatch):
             value, self.message = self.message, b""
             return value
 
-    def receive(state):
+    count = 0
+
+    def receive(state, sequence=None):
+        nonlocal count
+        count += 1
+        if sequence is None:
+            sequence = count
         window.process = Process(
             (
-                json.dumps({"event": "inference_health", "state": state, "rtf": 1.5})
+                json.dumps(
+                    {
+                        "event": "inference_health",
+                        "state": state,
+                        "rtf": 1.5,
+                        "sequence": sequence,
+                    }
+                )
                 + "\n"
             ).encode()
         )
@@ -71,6 +87,12 @@ def test_health_events_update_status_and_notify_once(monkeypatch):
     assert "missing audio deadlines" in window.status.text()
     receive("healthy")
     assert notified == [True]
+    assert window.status.text() == "Streaming enhanced microphone audio."
+    receive("degraded", 8)
+    receive("healthy", 7)
+    assert "missing audio deadlines" in window.status.text()
+    assert notified == [True, True]
+    receive("healthy", 9)
     assert window.status.text() == "Streaming enhanced microphone audio."
     window.process = None
     window.close()
@@ -239,3 +261,86 @@ def test_vbcable_failed_launch_allows_retry(monkeypatch):
 
     window.close()
     app.processEvents()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX notify-send fixture")
+def test_notify_send_timeout_waits_for_child_exit(monkeypatch, tmp_path, capfd):
+    import time
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import QProcess
+
+    from dpdfnet_mic_bridge import desktop
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Linux")
+    notifier = tmp_path / "notify-send"
+    notifier.write_text("#!/bin/sh\nsleep 30\n")
+    notifier.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ.get('PATH', '')}")
+    window = BridgeWindow()
+    messages = []
+    window.tray = SimpleNamespace(showMessage=lambda *args: messages.append(args))
+    window.notify_overload()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if window._notification_processes:
+            process = next(iter(window._notification_processes))
+            if process.state() == QProcess.ProcessState.Running:
+                break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("notify-send did not start")
+
+    # A crash error may arrive before finished, particularly after kill().
+    window._notification_error(process, QProcess.ProcessError.Crashed)
+    assert process in window._notification_processes
+    window._notification_timeout(process)
+    deadline = time.monotonic() + 3
+    while window._notification_processes and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert not window._notification_processes
+    assert len(messages) == 1
+    window.close()
+    app.processEvents()
+    assert "Destroyed while process" not in capfd.readouterr().err
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX notify-send fixture")
+def test_closing_window_waits_for_running_notification(monkeypatch, tmp_path, capfd):
+    import time
+
+    from PySide6.QtCore import QProcess
+
+    from dpdfnet_mic_bridge import desktop
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Linux")
+    notifier = tmp_path / "notify-send"
+    notifier.write_text("#!/bin/sh\nsleep 30\n")
+    notifier.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ.get('PATH', '')}")
+    window = BridgeWindow()
+    window.notify_overload()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if window._notification_processes:
+            process = next(iter(window._notification_processes))
+            if process.state() == QProcess.ProcessState.Running:
+                break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("notify-send did not start")
+    window.close()
+    deadline = time.monotonic() + 3
+    while window._notification_processes and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert not window._notification_processes
+    app.processEvents()
+    assert "Destroyed while process" not in capfd.readouterr().err
