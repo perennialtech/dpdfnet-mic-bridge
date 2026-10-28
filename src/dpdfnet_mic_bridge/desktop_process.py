@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stdout
 import json
 from pathlib import Path
 import platform
@@ -137,14 +138,15 @@ def internal_command(argv: list[str]) -> int:
     threading.Thread(target=read_control, name="desktop-control", daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
-    # Ready/endpoints callbacks and the health sender can run on different
-    # threads. Serialize complete JSON lines so messages cannot interleave.
+    # Reserve stdout for JSON events. Worker progress and diagnostics go to
+    # stderr, which the desktop reads separately.
+    event_stream = sys.stdout
     event_output_lock = threading.Lock()
 
     def emit_event(message: dict):
         with event_output_lock:
-            sys.stdout.write(json.dumps(message) + "\n")
-            sys.stdout.flush()
+            event_stream.write(json.dumps(message) + "\n")
+            event_stream.flush()
 
     def ready():
         emit_event({"event": "ready"})
@@ -173,13 +175,14 @@ def internal_command(argv: list[str]) -> int:
     from .bridge.runner import run_bridge
 
     try:
-        return run_bridge(
-            args,
-            stop,
-            ready,
-            endpoints,
-            lambda state, rtf: health_events.put((state, rtf)),
-        )
+        with redirect_stdout(sys.stderr):
+            return run_bridge(
+                args,
+                stop,
+                ready,
+                endpoints,
+                lambda state, rtf: health_events.put((state, rtf)),
+            )
     finally:
         health_events.put(None)
         sender.join(timeout=1)

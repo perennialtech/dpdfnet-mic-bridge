@@ -87,3 +87,17 @@ def test_failed_notify_send_falls_back_to_tray(monkeypatch, tmp_path):
     assert not window._notification_processes
     window.close()
     app.processEvents()
+
+
+def test_worker_diagnostics_are_read_from_stderr(monkeypatch):
+    from types import SimpleNamespace
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    window = BridgeWindow()
+    window.process = SimpleNamespace(readAllStandardError=lambda: b"worker log\n")
+    window.read_error()
+    assert "worker log" in window.log.toPlainText()
+    window.process = None
+    window.close()
+    app.processEvents()

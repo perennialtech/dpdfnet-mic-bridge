@@ -102,12 +102,13 @@ class BridgeWindow(QMainWindow):
         self.mode = mode
         self.buffer = ""
         self.process = QProcess(self)
-        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
         env.insert("PYTHONIOENCODING", "utf-8")
         self.process.setProcessEnvironment(env)
         self.process.readyReadStandardOutput.connect(self.read_output)
+        self.process.readyReadStandardError.connect(self.read_error)
         self.process.finished.connect(self.finished)
         self.process.errorOccurred.connect(self.process_error)
         executable, arguments = child_command(arguments)
@@ -198,6 +199,13 @@ class BridgeWindow(QMainWindow):
                     self.inference_degraded = False
                     self.status.setText("Streaming enhanced microphone audio.")
 
+    def read_error(self):
+        diagnostics = bytes(self.process.readAllStandardError()).decode(
+            "utf-8", errors="replace"
+        )
+        if diagnostics:
+            self.log.appendPlainText(diagnostics.rstrip("\n"))
+
     def notify_overload(self):
         title = "DPDFNet Mic Bridge"
         detail = "Inference is missing audio deadlines; your microphone may stutter."
@@ -266,6 +274,7 @@ class BridgeWindow(QMainWindow):
     def finished(self, code, exit_status):
         self.deadline.stop()
         self.read_output()
+        self.read_error()
         if self.buffer.strip():
             self.log.appendPlainText(self.buffer.strip())
         previous_mode = self.mode
