@@ -1,6 +1,10 @@
 import hashlib
 import importlib.util
+from io import BytesIO
+import json
 from pathlib import Path, PurePosixPath
+from urllib.error import URLError
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -11,6 +15,49 @@ def helper(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def mock_published_descriptor(
+    module, monkeypatch, descriptor, status="Published", publication_id="123"
+):
+    publication = {
+        "distro_series_link": "https://api.launchpad.net/1.0/ubuntu/jammy",
+        "source_package_name": "example",
+        "source_package_version": "1:2.0-1",
+        "self_link": module.ARCHIVE + f"/+sourcepub/{publication_id}",
+    }
+    descriptor_url = "https://launchpad.net/ubuntu/+archive/primary/+files/example.dsc"
+    archive_url = (
+        "https://launchpad.net/ubuntu/+archive/primary/+files/example.orig.tar.xz"
+    )
+    statuses = []
+    downloaded = []
+
+    def read_json(url):
+        if url.startswith(module.ARCHIVE + "?"):
+            query = parse_qs(urlsplit(url).query)
+            statuses.append(query["status"][0])
+            assert query["source_name"] == ["example"]
+            assert query["exact_match"] == ["true"]
+            return {"entries": [publication] if query["status"] == [status] else []}
+        assert url == publication["self_link"] + "?ws.op=sourceFileUrls"
+        return [descriptor_url, archive_url]
+
+    def request(url):
+        downloaded.append(url)
+        assert url == descriptor_url  # Never re-download the large archive.
+        return BytesIO(descriptor.encode())
+
+    monkeypatch.setattr(module, "read_json", read_json)
+    monkeypatch.setattr(module, "request", request)
+    return statuses, downloaded
+
+
+def source_descriptor(data):
+    return (
+        "Source: example\nVersion: 1:2.0-1\nChecksums-Sha256:\n"
+        f" {hashlib.sha256(data).hexdigest()} {len(data)} example.orig.tar.xz\n"
+    )
 
 
 def test_qt_notice_names_are_short_and_traceable():
@@ -46,24 +93,49 @@ def test_archived_source_descriptor_matches_exact_version(tmp_path):
         )
 
 
-def test_cached_ubuntu_sources_are_verified(tmp_path):
+def test_cached_ubuntu_sources_are_verified(tmp_path, monkeypatch):
     module = helper("stage_native_sources")
     data = b"source"
-    digest = hashlib.sha256(data).hexdigest()
-    descriptor = (
-        "Source: example\nVersion: 1:2.0-1\nChecksums-Sha256:\n"
-        f" {digest} {len(data)} example.orig.tar.xz\n"
-    )
-    (tmp_path / "example.dsc").write_text(descriptor)
+    descriptor = source_descriptor(data)
+    statuses, downloaded = mock_published_descriptor(module, monkeypatch, descriptor)
+    (tmp_path / "example.dsc").write_bytes(descriptor.encode())
     archive = tmp_path / "example.orig.tar.xz"
     archive.write_bytes(data)
+    record = tmp_path / "example-1_2.0-1-source.json"
+    record.write_text(
+        json.dumps(
+            {
+                "publication": module.ARCHIVE + "/+sourcepub/123",
+                "source": "example",
+                "version": "1:2.0-1",
+                "descriptor_sha256": hashlib.sha256(descriptor.encode()).hexdigest(),
+                "files": module.parse_descriptor(descriptor, "example", "1:2.0-1"),
+            }
+        )
+    )
     module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    assert statuses == ["Published"]
+    assert downloaded == [
+        "https://launchpad.net/ubuntu/+archive/primary/+files/example.dsc"
+    ]
+    # A source can be published in security and updates under different IDs.
+    # Existing records keep their earlier publication URL; the exact .dsc
+    # and archive checksums, not that URL, identify trustworthy source bytes.
+    mock_published_descriptor(module, monkeypatch, descriptor, publication_id="999")
+    module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    provenance = json.loads(record.read_text())
+    provenance["source"] = "not-example"
+    record.write_text(json.dumps(provenance))
+    with pytest.raises(RuntimeError, match="provenance mismatch"):
+        module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    provenance["source"] = "example"
+    record.write_text(json.dumps(provenance))
     extra = tmp_path / "EXTRA-UNVERIFIED"
     extra.write_text("not a corresponding source")
     with pytest.raises(RuntimeError, match="Unexpected cached source files"):
         module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
     extra.unlink()
-    with pytest.raises(RuntimeError, match="Expected one cached descriptor"):
+    with pytest.raises(RuntimeError, match="No exact Ubuntu 22.04 source publication"):
         module.verify_cached_sources({("example", "other-version")}, tmp_path)
     archive.write_bytes(b"broken")
     with pytest.raises(RuntimeError, match="checksum mismatch"):
@@ -71,3 +143,119 @@ def test_cached_ubuntu_sources_are_verified(tmp_path):
     archive.unlink()
     with pytest.raises(RuntimeError, match="Missing cached source file"):
         module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+
+
+def test_forged_descriptor_archive_and_provenance_are_rejected(tmp_path, monkeypatch):
+    module = helper("stage_native_sources")
+    authentic = source_descriptor(b"source")
+    mock_published_descriptor(module, monkeypatch, authentic)
+    forged = source_descriptor(b"forged")
+    (tmp_path / "example.dsc").write_bytes(forged.encode())
+    (tmp_path / "example.orig.tar.xz").write_bytes(b"forged")
+    (tmp_path / "example-1_2.0-1-source.json").write_text(
+        json.dumps(
+            {
+                "publication": module.ARCHIVE + "/+sourcepub/123",
+                "source": "example",
+                "version": "1:2.0-1",
+                "descriptor_sha256": hashlib.sha256(forged.encode()).hexdigest(),
+                "files": module.parse_descriptor(forged, "example", "1:2.0-1"),
+            }
+        )
+    )
+    with pytest.raises(RuntimeError, match="descriptor differs from Ubuntu"):
+        module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+
+
+def test_superseded_jammy_cache_is_authenticated(tmp_path, monkeypatch):
+    module = helper("stage_native_sources")
+    descriptor = source_descriptor(b"source")
+    statuses, downloaded = mock_published_descriptor(
+        module, monkeypatch, descriptor, status="Superseded"
+    )
+    (tmp_path / "example.dsc").write_bytes(descriptor.encode())
+    (tmp_path / "example.orig.tar.xz").write_bytes(b"source")
+    module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    assert statuses == ["Published", "Superseded"]
+    assert len(downloaded) == 1
+
+
+def test_cache_verification_fails_closed_without_publisher(tmp_path, monkeypatch):
+    module = helper("stage_native_sources")
+    descriptor = source_descriptor(b"source")
+    mock_published_descriptor(module, monkeypatch, descriptor)
+    (tmp_path / "example.dsc").write_bytes(descriptor.encode())
+    (tmp_path / "example.orig.tar.xz").write_bytes(b"source")
+
+    def unavailable(url):
+        raise URLError("publisher unavailable")
+
+    monkeypatch.setattr(module, "request", unavailable)
+    with pytest.raises(URLError, match="publisher unavailable"):
+        module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+
+
+def test_publisher_redirect_must_remain_https(monkeypatch):
+    module = helper("stage_native_sources")
+
+    class RedirectedResponse(BytesIO):
+        def geturl(self):
+            return "http://launchpadlibrarian.net/example.dsc"
+
+    response = RedirectedResponse(b"untrusted")
+
+    class FakeOpener:
+        def open(self, request, timeout):
+            return response
+
+    monkeypatch.setattr(module, "build_opener", lambda handler: FakeOpener())
+    with pytest.raises(RuntimeError, match="outside trusted HTTPS"):
+        module.request("https://launchpad.net/example.dsc")
+    assert response.closed
+
+
+def test_redirects_reject_insecure_intermediate_or_untrusted_host(monkeypatch):
+    module = helper("stage_native_sources")
+
+    class FakeOpener:
+        def __init__(self, handler):
+            self.handler = handler
+
+        def open(self, request, timeout):
+            # A safe first hop does not make an HTTP second hop safe.
+            first = self.handler.redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://launchpadlibrarian.net/first",
+            )
+            self.handler.redirect_request(
+                first,
+                None,
+                302,
+                "Found",
+                {},
+                "http://launchpadlibrarian.net/second",
+            )
+            raise AssertionError("Should reject the insecure intermediate hop")
+
+    monkeypatch.setattr(module, "build_opener", lambda handler: FakeOpener(handler))
+    with pytest.raises(RuntimeError, match="outside trusted HTTPS"):
+        module.request("https://launchpad.net/ubuntu/source.dsc")
+
+    handler = module.TrustedRedirectHandler()
+    for url in (
+        "https://attacker.example/source.dsc",
+        "http://launchpadlibrarian.net/source.dsc",
+    ):
+        with pytest.raises(RuntimeError, match="outside trusted HTTPS"):
+            handler.redirect_request(
+                module.Request("https://launchpad.net/ubuntu/source.dsc"),
+                None,
+                302,
+                "Found",
+                {},
+                url,
+            )
