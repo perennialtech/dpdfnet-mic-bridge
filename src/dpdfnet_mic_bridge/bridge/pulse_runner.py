@@ -22,7 +22,7 @@ def run_pulse_bridge(
     stop: threading.Event,
     on_ready=None,
     on_endpoints=None,
-    on_health: Callable[[str, float], None] | None = None,
+    on_health: Callable[[str, float, int], None] | None = None,
 ) -> int:
     if args.input is not None and getattr(args, "source", None) is not None:
         raise ValueError("Choose either --input or --source, not both.")

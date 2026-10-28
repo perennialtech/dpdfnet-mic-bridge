@@ -34,7 +34,7 @@ class EnhancementWorker:
         block_size: int,
         realtime_request: RuntimeTuningRequest | None = None,
         read_timeout_ms: int = 100,
-        on_health: Callable[[str, float], None] | None = None,
+        on_health: Callable[[str, float, int], None] | None = None,
     ) -> None:
         self._engine = engine
         self._enhancer = enhancer

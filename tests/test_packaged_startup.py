@@ -82,8 +82,8 @@ def test_desktop_worker_forwards_health_events_without_audio_thread_io(
     monkeypatch.setattr(sys, "stdin", io.StringIO(""))
 
     def fake_run(args, stop, ready, endpoints, health):
-        health("degraded", 1.4)
-        health("healthy", 0.7)
+        health("degraded", 1.4, 1)
+        health("healthy", 0.7, 2)
         return 0
 
     monkeypatch.setattr(runner, "run_bridge", fake_run)
@@ -95,8 +95,8 @@ def test_desktop_worker_forwards_health_events_without_audio_thread_io(
     )
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert events == [
-        {"event": "inference_health", "state": "degraded", "rtf": 1.4},
-        {"event": "inference_health", "state": "healthy", "rtf": 0.7},
+        {"event": "inference_health", "state": "degraded", "rtf": 1.4, "sequence": 1},
+        {"event": "inference_health", "state": "healthy", "rtf": 0.7, "sequence": 2},
     ]
 
 
@@ -118,7 +118,7 @@ def test_desktop_worker_serializes_concurrent_json_events(monkeypatch, capsys):
         thread = threading.Thread(target=signal_ready)
         thread.start()
         for _ in range(100):
-            health("degraded", 1.4)
+            health("degraded", 1.4, 1)
         thread.join()
         return 0
 
@@ -146,7 +146,7 @@ def test_desktop_worker_diagnostics_cannot_corrupt_health_events(monkeypatch, ca
 
     def fake_run(args, stop, ready, endpoints, health):
         print("DIAG", end="", flush=True)
-        health("degraded", 1.4)
+        health("degraded", 1.4, 1)
         ready()
         return 0
 
@@ -161,6 +161,6 @@ def test_desktop_worker_diagnostics_cannot_corrupt_health_events(monkeypatch, ca
     assert captured.err == "DIAG"
     events = [json.loads(line) for line in captured.out.splitlines()]
     assert sorted(events, key=lambda event: event["event"]) == [
-        {"event": "inference_health", "state": "degraded", "rtf": 1.4},
+        {"event": "inference_health", "state": "degraded", "rtf": 1.4, "sequence": 1},
         {"event": "ready"},
     ]

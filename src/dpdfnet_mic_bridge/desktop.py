@@ -40,6 +40,7 @@ class BridgeWindow(QMainWindow):
         self.forced = False
         self.worker_failed = False
         self.inference_degraded = False
+        self._health_sequence = 0
         self._notification_processes = set()
         self.vbcable_setup_launched = False
         self.status = QLabel("Looking for microphones…")
@@ -136,6 +137,7 @@ class BridgeWindow(QMainWindow):
         self.stopping = self.forced = False
         self.worker_failed = False
         self.inference_degraded = False
+        self._health_sequence = 0
         self.status.setText("Loading model and starting audio…")
         self.spawn(
             "worker",
@@ -259,6 +261,13 @@ class BridgeWindow(QMainWindow):
                 and self.mode == "worker"
                 and not self.stopping
             ):
+                # Callbacks may be queued in a different order from monitor
+                # transitions. Ignore older events rather than clearing a
+                # warning for an earlier recovery.
+                sequence = message["sequence"]
+                if sequence <= self._health_sequence:
+                    continue
+                self._health_sequence = sequence
                 if message.get("state") == "degraded":
                     if self.inference_degraded:
                         continue
@@ -302,9 +311,7 @@ class BridgeWindow(QMainWindow):
                 )
             )
             notifier.errorOccurred.connect(
-                lambda error, process=notifier: self._complete_notification(
-                    process, False
-                )
+                lambda error, process=notifier: self._notification_error(process, error)
             )
             notifier.start()
             QTimer.singleShot(
@@ -322,21 +329,29 @@ class BridgeWindow(QMainWindow):
             process, code == 0 and status == QProcess.ExitStatus.NormalExit
         )
 
+    def _notification_error(self, process, error):
+        # Crashed is also emitted when kill() is requested. The finished
+        # signal, not that error, establishes that the child has exited.
+        if error == QProcess.ProcessError.FailedToStart:
+            self._complete_notification(process, False)
+
     def _notification_timeout(self, process):
         if process in self._notification_processes:
+            # Wait for QProcess.finished before releasing the running child.
             process.kill()
-            self._complete_notification(process, False)
 
     def _complete_notification(self, process, succeeded):
         if process not in self._notification_processes:
             return
         self._notification_processes.remove(process)
-        if not succeeded:
+        if not succeeded and not self.closing:
             self._notification_fallback(
                 "DPDFNet Mic Bridge",
                 "Inference is missing audio deadlines; your microphone may stutter.",
             )
         process.deleteLater()
+        if self.closing and self.process is None and not self._notification_processes:
+            QTimer.singleShot(0, self.close)
 
     def process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
@@ -399,14 +414,18 @@ class BridgeWindow(QMainWindow):
                 self.process.kill()
             event.ignore()
         else:
-            # QTimer callbacks must never dereference a notifier destroyed
-            # alongside the closing window.
+            # Leave the window alive until QProcess.finished releases each
+            # notifier. Closing must neither block Qt nor delete live children.
+            self.closing = True
             for notifier in tuple(self._notification_processes):
-                self._notification_processes.remove(notifier)
-                if notifier.state() != QProcess.ProcessState.NotRunning:
+                if notifier.state() == QProcess.ProcessState.NotRunning:
+                    self._complete_notification(notifier, True)
+                else:
                     notifier.kill()
-                notifier.deleteLater()
-            event.accept()
+            if self._notification_processes:
+                event.ignore()
+            else:
+                event.accept()
 
 
 def desktop_main() -> int:
