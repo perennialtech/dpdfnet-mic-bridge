@@ -27,15 +27,25 @@ Windows installers are unsigned and may trigger SmartScreen warnings.
 Run the installer, then open **DPDFNet Mic Bridge** from the Start menu. The
 application installs for your user without administrator access.
 
-Windows separately requires [VB-CABLE from VB-Audio](https://vb-audio.com/Cable/).
-The window links to the official download if its endpoints are missing. Driver
-installation needs administrator approval and may require a restart. After
-installing the driver, click **Refresh**. The bridge writes to `CABLE Input`;
-your calling app records from `CABLE Output`.
+The Windows installer includes the **original VB-CABLE driver package** from
+[VB-Audio](https://www.vb-cable.com). On a fresh system, setup offers to launch
+its driver installer (with administrator approval). This is optional: the bridge
+itself still installs without administrator access. If you skip VB-CABLE, the
+bridge window offers **Install VB-CABLE** later. If the driver is already
+registered, neither path invokes the vendor installer, which could otherwise
+offer to remove it. Complete the VB-Audio setup and **restart Windows**, then
+click **Refresh** in the bridge. The bridge writes to `CABLE Input`; your
+calling app records from `CABLE Output`.
 
-The bridge does not bundle, install, or uninstall VB-CABLE, which other apps may
-also use. The installer is unsigned; Windows may warn about an unknown publisher or
-unrecognised application.
+VB-CABLE is **donationware by VB-Audio**; all contributions are welcome.
+You can donate or purchase a license at [www.vb-cable.com](https://www.vb-cable.com).
+The driver is licensed separately from this MIT-licensed application. Professional
+and organizational deployments may require paid VB-Audio licenses; see
+[VB-Audio licensing](https://vb-audio.com/Services/licensing.htm).
+The bridge **never uninstalls VB-CABLE** because other apps can use it.
+Unattended bridge installations deliberately do not launch the driver setup;
+run VB-Audio's installer interactively if required. The bridge installer itself
+is unsigned; Windows may warn about an unknown publisher.
 
 ### Linux
 

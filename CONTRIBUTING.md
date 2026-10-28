@@ -106,11 +106,19 @@ executable for diagnostics and child processes. Test `--help` and
 Use the Inno Setup version pinned in CI:
 
 ```powershell
+uv run --no-sync python packaging/stage_vbcable.py
 iscc /DAppVersion=0.2.0 packaging/dpdfnet-mic-bridge.iss
 ```
 
 The installer writes the application under the current user's Programs directory
-and adds a Start menu shortcut and uninstaller. It never manages VB-CABLE.
+and adds a Start menu shortcut and uninstaller. It includes the unmodified,
+checksum-verified standard VB-CABLE package, but offers its separate driver
+installer only when the user opts in. The bridge never removes that shared
+driver. VB-Audio permits bundling the standard VB-CABLE under the donationware
+conditions on its [licensing page](https://vb-audio.com/Services/licensing.htm):
+users must recognize VB-Audio as the origin and be able to donate or purchase a
+license. Professional deployments where users cannot do so require licenses.
+The extra VB-CABLE A+B and C+D products are not permitted to be bundled.
 CI tests installation, upgrade, command startup, and uninstall in a path with
 spaces. The Windows installer and executables are distributed unsigned. Windows may
 show an unknown-publisher or SmartScreen warning.
@@ -150,8 +158,10 @@ and real-hardware tests cannot be replaced by hosted CI.
   fetched from Launchpad and checked against their exact source descriptors.
   Review wheel-bundled native components
   too; a list of license names is not sufficient.
-- Verify final checksums. Do not bundle VB-CABLE without permission, invent
-  silent driver switches, or uninstall its shared driver with the bridge.
+- Verify final checksums. When redistributing standard VB-CABLE, preserve
+  VB-Audio attribution and the end user's opportunity to donate or license it,
+  as required by its published distribution grant. Do not bundle other VB-CABLE
+  editions, invent silent driver switches, or uninstall the shared driver.
 - Test clean Windows 10/11 x64 without Python/build tools, with and without
   VB-CABLE: both WASAPI endpoints, physical microphones, real streaming, paths
   with spaces, shutdown, upgrades, and uninstall.

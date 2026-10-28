@@ -42,5 +42,18 @@ files are included in the notices. LGPL components require corresponding source
 materials when distributing binaries; the release checklist covers this audit.
 
 PortAudio and the Rust extension are included for Windows and advanced native
-routes. VB-CABLE is not included, installed, or removed by this application.
-Obtain its driver and terms from [VB-Audio](https://vb-audio.com/Cable/).
+routes.
+
+The Windows setup bundles the **unmodified standard VB-CABLE driver** by
+**VB-Audio** (Vincent Burel), which is separate donationware, *not* MIT licensed.
+All contributions are welcome. End users may donate or purchase their licenses
+at [www.vb-cable.com](https://www.vb-cable.com). VB-Audio's
+[published distribution grant](https://vb-audio.com/Services/licensing.htm)
+permits embedding the standard VB-CABLE with another application when end users
+can identify VB-Audio and donate or buy a license. Professional deployments
+where users cannot pay for their own licenses require the distributor to buy
+them; the extra A+B and C+D driver editions may not be bundled.
+The original vendor `readme.txt` is retained in `vendor/vbcable` with the
+driver files. The archive source and SHA-256 are pinned in `packaging/vbcable.json`.
+Installer and in-app installation are optional, require administrator approval,
+and use VB-Audio's GUI. The bridge never uninstalls or replaces the driver.
