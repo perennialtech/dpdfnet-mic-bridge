@@ -16,6 +16,9 @@ processing. No Python or separate model download is needed.
 | Windows 10/11 x64 | `*-windows-x64-setup.exe` | `CABLE Output` |
 | Linux x86-64 | `*-linux-x86_64.AppImage` | `DPDFNet_Mic` |
 
+Automated checks do not guarantee compatibility with your microphone or audio
+driver.
+
 ### Windows
 
 Run the installer and open **DPDFNet Mic Bridge** from the Start menu.
