@@ -137,19 +137,25 @@ def internal_command(argv: list[str]) -> int:
     threading.Thread(target=read_control, name="desktop-control", daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
+    # Ready/endpoints callbacks and the health sender can run on different
+    # threads. Serialize complete JSON lines so messages cannot interleave.
+    event_output_lock = threading.Lock()
+
+    def emit_event(message: dict):
+        with event_output_lock:
+            sys.stdout.write(json.dumps(message) + "\n")
+            sys.stdout.flush()
+
     def ready():
-        print(json.dumps({"event": "ready"}), flush=True)
+        emit_event({"event": "ready"})
 
     def endpoints(endpoint):
-        print(
-            json.dumps(
-                {
-                    "event": "endpoints",
-                    "sink": endpoint.render_name,
-                    "modules": endpoint.module_ids,
-                }
-            ),
-            flush=True,
+        emit_event(
+            {
+                "event": "endpoints",
+                "sink": endpoint.render_name,
+                "modules": endpoint.module_ids,
+            }
         )
 
     # Audio workers only enqueue transitions; a separate thread writes IPC so
@@ -159,10 +165,7 @@ def internal_command(argv: list[str]) -> int:
     def forward_health():
         while (transition := health_events.get()) is not None:
             state, rtf = transition
-            print(
-                json.dumps({"event": "inference_health", "state": state, "rtf": rtf}),
-                flush=True,
-            )
+            emit_event({"event": "inference_health", "state": state, "rtf": rtf})
 
     sender = threading.Thread(target=forward_health, name="desktop-health", daemon=True)
     sender.start()
