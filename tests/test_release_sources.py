@@ -44,3 +44,25 @@ def test_archived_source_descriptor_matches_exact_version(tmp_path):
             "example",
             "1:2.0-1",
         )
+
+
+def test_cached_ubuntu_sources_are_verified(tmp_path):
+    module = helper("stage_native_sources")
+    data = b"source"
+    digest = hashlib.sha256(data).hexdigest()
+    descriptor = (
+        "Source: example\nVersion: 1:2.0-1\nChecksums-Sha256:\n"
+        f" {digest} {len(data)} example.orig.tar.xz\n"
+    )
+    (tmp_path / "example.dsc").write_text(descriptor)
+    archive = tmp_path / "example.orig.tar.xz"
+    archive.write_bytes(data)
+    module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    with pytest.raises(RuntimeError, match="Expected one cached descriptor"):
+        module.verify_cached_sources({("example", "other-version")}, tmp_path)
+    archive.write_bytes(b"broken")
+    with pytest.raises(RuntimeError, match="checksum mismatch"):
+        module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    archive.unlink()
+    with pytest.raises(RuntimeError, match="Missing cached source file"):
+        module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)

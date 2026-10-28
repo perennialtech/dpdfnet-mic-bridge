@@ -33,8 +33,11 @@ def test_source_archives_are_bundled_without_modifying_binaries(
             )
         (sources / "qt-sources.json").write_text(f"{platform} manifest")
         if platform == "Linux":
-            (sources / "libalsa.dsc").write_text("Ubuntu source")
-            (sources / "xz-utils-source.json").write_text("Ubuntu descriptor")
+            (sources / "ubuntu").mkdir()
+            (sources / "ubuntu" / "libalsa.dsc").write_text("Ubuntu source")
+            (sources / "ubuntu" / "xz-utils-source.json").write_text(
+                "Ubuntu descriptor"
+            )
     release = tmp_path / "release"
     release.mkdir()
     binaries = [

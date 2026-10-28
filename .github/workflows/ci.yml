@@ -122,12 +122,23 @@ jobs:
           uv run --no-sync python -m PyInstaller --clean --noconfirm packaging/dpdfnet-mic-bridge.spec
       - name: Retain Rust dependency source
         run: cargo vendor --locked --manifest-path rust/native_audio/Cargo.toml build/third-party-sources/rust-crates
+      - name: Cache matching Ubuntu source archives
+        if: runner.os == 'Linux'
+        id: ubuntu-sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/third-party-sources/ubuntu
+          key: ubuntu-sources-jammy-v1-${{ hashFiles('build/notices/native-package-versions.txt', 'packaging/stage_native_sources.py') }}
       - name: Retain matching Ubuntu client-library sources
         if: runner.os == 'Linux'
         shell: bash
         # A degraded Ubuntu mirror previously stalled this step for 144 minutes.
         timeout-minutes: 20
         run: |
+          if [[ "${{ steps.ubuntu-sources.outputs.cache-hit }}" == true ]]; then
+            uv run --no-sync python packaging/stage_native_sources.py --verify-only
+            exit 0
+          fi
           # Ubuntu's Azure runner image uses a mirror+file URL which may
           # repeatedly stall while fetching source archives. Resolve only the
           # deb-src entries to the official HTTPS Ubuntu archive instead.

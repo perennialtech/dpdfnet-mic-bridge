@@ -89,6 +89,10 @@ def main() -> None:
                 existing = qt.setdefault(source.name, source)
                 if existing != source and not same_file(existing, source):
                     raise RuntimeError(f"Conflicting Qt source archive: {source.name}")
+            elif platform == "Linux" and source.name == "ubuntu" and source.is_dir():
+                ubuntu.extend(
+                    (path, f"ubuntu/{path.name}") for path in sorted(source.iterdir())
+                )
             elif platform == "Linux":
                 ubuntu.append((source, f"ubuntu/{source.name}"))
             else:
