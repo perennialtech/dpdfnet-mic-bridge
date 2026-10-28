@@ -302,9 +302,7 @@ class BridgeWindow(QMainWindow):
                 )
             )
             notifier.errorOccurred.connect(
-                lambda error, process=notifier: self._complete_notification(
-                    process, False
-                )
+                lambda error, process=notifier: self._notification_error(process, error)
             )
             notifier.start()
             QTimer.singleShot(
@@ -321,6 +319,12 @@ class BridgeWindow(QMainWindow):
         self._complete_notification(
             process, code == 0 and status == QProcess.ExitStatus.NormalExit
         )
+
+    def _notification_error(self, process, error):
+        # Crashed is also emitted when kill() is requested. The finished
+        # signal, not that error, establishes that the child has exited.
+        if error == QProcess.ProcessError.FailedToStart:
+            self._complete_notification(process, False)
 
     def _notification_timeout(self, process):
         if process in self._notification_processes:

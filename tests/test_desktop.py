@@ -1,4 +1,7 @@
 import os
+import sys
+
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -174,6 +177,7 @@ def test_vbcable_failed_launch_allows_retry(monkeypatch):
     app.processEvents()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX notify-send fixture")
 def test_notify_send_timeout_waits_for_child_exit(monkeypatch, tmp_path, capfd):
     import time
     from types import SimpleNamespace
@@ -204,6 +208,9 @@ def test_notify_send_timeout_waits_for_child_exit(monkeypatch, tmp_path, capfd):
     else:
         raise AssertionError("notify-send did not start")
 
+    # A crash error may arrive before finished, particularly after kill().
+    window._notification_error(process, QProcess.ProcessError.Crashed)
+    assert process in window._notification_processes
     window._notification_timeout(process)
     deadline = time.monotonic() + 3
     while window._notification_processes and time.monotonic() < deadline:
@@ -216,6 +223,7 @@ def test_notify_send_timeout_waits_for_child_exit(monkeypatch, tmp_path, capfd):
     assert "Destroyed while process" not in capfd.readouterr().err
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX notify-send fixture")
 def test_closing_window_waits_for_running_notification(monkeypatch, tmp_path, capfd):
     import time
 
