@@ -50,7 +50,7 @@ def test_worker_reports_health_without_changing_existing_deadline_metrics():
         enhancer=None,
         sample_rate=48000,
         block_size=960,
-        on_health=lambda state, rtf: events.append((state, rtf)),
+        on_health=lambda state, rtf, sequence: events.append((state, rtf, sequence)),
     )
     for _ in range(320):
         worker._record_process_time(0.030)
@@ -132,7 +132,7 @@ def test_default_linux_route_emits_health_transitions(monkeypatch):
             input=None, source="test", model="test", realtime="off", verbose=False
         ),
         stop,
-        on_health=lambda state, rtf: transitions.append(state),
+        on_health=lambda state, rtf, sequence: transitions.append(state),
     )
     assert result == 0
     assert transitions == ["degraded", "healthy"]
@@ -190,7 +190,7 @@ def test_stalled_native_enhancer_is_detected_before_process_returns(monkeypatch)
             release.wait(timeout=3)
             return block.copy()
 
-    def on_health(state, rtf):
+    def on_health(state, rtf, sequence):
         events.append(state)
         reported.set()
 
@@ -320,7 +320,7 @@ def test_stalled_pulse_inference_is_detected_before_process_returns(monkeypatch)
     )
     monkeypatch.setattr(pulse_runner, "PulseTransport", lambda *_: Context(Transport()))
 
-    def on_health(state, rtf):
+    def on_health(state, rtf, sequence):
         events.append(state)
         reported.set()
 
@@ -353,39 +353,20 @@ def test_stalled_pulse_inference_is_detected_before_process_returns(monkeypatch)
     assert not errors
 
 
-def test_concurrent_health_callbacks_follow_state_transitions():
-    """A slow recovery callback must not overtake a new overload transition."""
-    entered = threading.Event()
-    release = threading.Event()
-    events = []
-
-    def on_health(state, rtf):
-        if state == "healthy":
-            entered.set()
-            assert release.wait(2)
-        events.append(state)
-
-    monitor = InferenceHealth(on_health)
-    monitor.observe_output_faults(0, now=0)
+def test_health_transitions_have_monotonic_sequence_numbers():
+    monitor = InferenceHealth()
+    emitted = []
+    assert monitor.observe_output_faults(0, now=0) is None
     for index in range(1, 66):
-        monitor.observe_output_faults(index, now=index * 0.1)
-    assert events == ["degraded"]
-
-    recovering = threading.Thread(
-        target=lambda: monitor.observe_output_faults(65, now=12)
-    )
-    recovering.start()
-    try:
-        assert entered.wait(1)
-        overloading = threading.Thread(
-            target=lambda: [monitor.observe(0.2, 0.02) for _ in range(30)]
-        )
-        overloading.start()
-        assert events == ["degraded"]
-    finally:
-        release.set()
-        recovering.join(timeout=2)
-    overloading.join(timeout=2)
-    assert not recovering.is_alive()
-    assert not overloading.is_alive()
-    assert events == ["degraded", "healthy", "degraded"]
+        event = monitor.observe_output_faults(index, now=index * 0.1)
+        if event:
+            emitted.append(event)
+    recovery = monitor.observe_output_faults(65, now=12)
+    assert recovery is not None
+    emitted.append(recovery)
+    for _ in range(30):
+        event = monitor.observe(0.2, 0.02)
+        if event:
+            emitted.append(event)
+    assert [event[0] for event in emitted] == ["degraded", "healthy", "degraded"]
+    assert [event[2] for event in emitted] == [1, 2, 3]

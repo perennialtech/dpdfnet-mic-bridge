@@ -112,7 +112,7 @@ def run_bridge(
     stop_event=None,
     on_ready=None,
     on_endpoints=None,
-    on_health: Callable[[str, float], None] | None = None,
+    on_health: Callable[[str, float, int], None] | None = None,
 ) -> int:
     stop_event = stop_event or threading.Event()
     if platform.system() == "Linux" and args.output is None:

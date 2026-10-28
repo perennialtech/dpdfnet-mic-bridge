@@ -42,10 +42,23 @@ def test_health_events_update_status_and_notify_once(monkeypatch):
             value, self.message = self.message, b""
             return value
 
-    def receive(state):
+    count = 0
+
+    def receive(state, sequence=None):
+        nonlocal count
+        count += 1
+        if sequence is None:
+            sequence = count
         window.process = Process(
             (
-                json.dumps({"event": "inference_health", "state": state, "rtf": 1.5})
+                json.dumps(
+                    {
+                        "event": "inference_health",
+                        "state": state,
+                        "rtf": 1.5,
+                        "sequence": sequence,
+                    }
+                )
                 + "\n"
             ).encode()
         )
@@ -60,6 +73,12 @@ def test_health_events_update_status_and_notify_once(monkeypatch):
     assert "missing audio deadlines" in window.status.text()
     receive("healthy")
     assert notified == [True]
+    assert window.status.text() == "Streaming enhanced microphone audio."
+    receive("degraded", 8)
+    receive("healthy", 7)
+    assert "missing audio deadlines" in window.status.text()
+    assert notified == [True, True]
+    receive("healthy", 9)
     assert window.status.text() == "Streaming enhanced microphone audio."
     window.process = None
     window.close()
@@ -251,6 +270,10 @@ def test_closing_window_waits_for_running_notification(monkeypatch, tmp_path, ca
     else:
         raise AssertionError("notify-send did not start")
     window.close()
-    app.processEvents()
+    deadline = time.monotonic() + 3
+    while window._notification_processes and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
     assert not window._notification_processes
+    app.processEvents()
     assert "Destroyed while process" not in capfd.readouterr().err

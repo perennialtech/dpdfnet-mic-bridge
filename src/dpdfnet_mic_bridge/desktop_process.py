@@ -162,12 +162,21 @@ def internal_command(argv: list[str]) -> int:
 
     # Audio workers only enqueue transitions; a separate thread writes IPC so
     # notifications cannot block microphone capture or inference.
-    health_events: queue.SimpleQueue[tuple[str, float] | None] = queue.SimpleQueue()
+    health_events: queue.SimpleQueue[tuple[str, float, int] | None] = (
+        queue.SimpleQueue()
+    )
 
     def forward_health():
         while (transition := health_events.get()) is not None:
-            state, rtf = transition
-            emit_event({"event": "inference_health", "state": state, "rtf": rtf})
+            state, rtf, sequence = transition
+            emit_event(
+                {
+                    "event": "inference_health",
+                    "state": state,
+                    "rtf": rtf,
+                    "sequence": sequence,
+                }
+            )
 
     sender = threading.Thread(target=forward_health, name="desktop-health", daemon=True)
     sender.start()
@@ -181,7 +190,7 @@ def internal_command(argv: list[str]) -> int:
                 stop,
                 ready,
                 endpoints,
-                lambda state, rtf: health_events.put((state, rtf)),
+                lambda state, rtf, sequence: health_events.put((state, rtf, sequence)),
             )
     finally:
         health_events.put(None)

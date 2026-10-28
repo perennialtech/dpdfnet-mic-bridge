@@ -40,6 +40,7 @@ class BridgeWindow(QMainWindow):
         self.forced = False
         self.worker_failed = False
         self.inference_degraded = False
+        self._health_sequence = 0
         self._notification_processes = set()
         self.vbcable_setup_launched = False
         self.status = QLabel("Looking for microphones…")
@@ -136,6 +137,7 @@ class BridgeWindow(QMainWindow):
         self.stopping = self.forced = False
         self.worker_failed = False
         self.inference_degraded = False
+        self._health_sequence = 0
         self.status.setText("Loading model and starting audio…")
         self.spawn(
             "worker",
@@ -259,6 +261,13 @@ class BridgeWindow(QMainWindow):
                 and self.mode == "worker"
                 and not self.stopping
             ):
+                # Callbacks may be queued in a different order from monitor
+                # transitions. Ignore older events rather than clearing a
+                # warning for an earlier recovery.
+                sequence = message["sequence"]
+                if sequence <= self._health_sequence:
+                    continue
+                self._health_sequence = sequence
                 if message.get("state") == "degraded":
                     if self.inference_degraded:
                         continue
@@ -341,6 +350,8 @@ class BridgeWindow(QMainWindow):
                 "Inference is missing audio deadlines; your microphone may stutter.",
             )
         process.deleteLater()
+        if self.closing and self.process is None and not self._notification_processes:
+            QTimer.singleShot(0, self.close)
 
     def process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
@@ -403,15 +414,18 @@ class BridgeWindow(QMainWindow):
                 self.process.kill()
             event.ignore()
         else:
-            # Finish outstanding notification processes before destroying
-            # the window. QProcess must not be deleted while still running.
+            # Leave the window alive until QProcess.finished releases each
+            # notifier. Closing must neither block Qt nor delete live children.
             self.closing = True
             for notifier in tuple(self._notification_processes):
-                if notifier.state() != QProcess.ProcessState.NotRunning:
+                if notifier.state() == QProcess.ProcessState.NotRunning:
+                    self._complete_notification(notifier, True)
+                else:
                     notifier.kill()
-                    notifier.waitForFinished()
-                self._complete_notification(notifier, True)
-            event.accept()
+            if self._notification_processes:
+                event.ignore()
+            else:
+                event.accept()
 
 
 def desktop_main() -> int:

@@ -18,11 +18,9 @@ MIN_OVERLOAD_SAMPLES = 5
 
 
 class InferenceHealth:
-    def __init__(
-        self, on_transition: Callable[[str, float], None] | None = None
-    ) -> None:
+    def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._on_transition = on_transition
+        self._transition_sequence = 0
         self._samples: deque[tuple[float, float, bool]] = deque()
         self._inference_seconds = 0.0
         self._audio_seconds = 0.0
@@ -42,20 +40,20 @@ class InferenceHealth:
 
     def finish_inference(
         self, inference_seconds: float, audio_seconds: float
-    ) -> tuple[str, float] | None:
+    ) -> tuple[str, float, int] | None:
         with self._lock:
             self._inference_started = None
             return self._observe_locked(inference_seconds, audio_seconds)
 
     def observe(
         self, inference_seconds: float, audio_seconds: float
-    ) -> tuple[str, float] | None:
+    ) -> tuple[str, float, int] | None:
         with self._lock:
             return self._observe_locked(inference_seconds, audio_seconds)
 
     def _observe_locked(
         self, inference_seconds: float, audio_seconds: float
-    ) -> tuple[str, float] | None:
+    ) -> tuple[str, float, int] | None:
         if audio_seconds <= 0:
             raise ValueError("audio_seconds must be positive")
         missed = inference_seconds > audio_seconds
@@ -97,22 +95,17 @@ class InferenceHealth:
             self._slow_degraded = False
         return self._transition_locked(rtf)
 
-    def _transition_locked(self, rtf: float) -> tuple[str, float] | None:
+    def _transition_locked(self, rtf: float) -> tuple[str, float, int] | None:
         degraded = self._slow_degraded or self._output_degraded
         if degraded == self._degraded:
             return None
         self._degraded = degraded
-        transition = ("degraded" if degraded else "healthy"), rtf
-        if self._on_transition is not None:
-            # Dispatch while holding the monitor lock so watchdog and audio
-            # threads cannot publish recovery and overload out of order.
-            self._on_transition(*transition)
-            return None
-        return transition
+        self._transition_sequence += 1
+        return ("degraded" if degraded else "healthy"), rtf, self._transition_sequence
 
     def observe_output_faults(
         self, cumulative_faults: int, *, now: float | None = None
-    ) -> tuple[str, float] | None:
+    ) -> tuple[str, float, int] | None:
         """Native output starvation/drop counters; ignores startup and short bursts."""
         if now is None:
             now = time.monotonic()
@@ -145,7 +138,7 @@ class InferenceHealth:
                 self._last_output_fault_at = None
             return self._transition_locked(self._last_rtf)
 
-    def check_stall(self) -> tuple[str, float] | None:
+    def check_stall(self) -> tuple[str, float, int] | None:
         """Called outside inference so an indefinitely blocked call is seen."""
         with self._lock:
             started = self._inference_started
@@ -167,7 +160,7 @@ class HealthWatchdog:
     def __init__(
         self,
         health: InferenceHealth | None,
-        on_health: Callable[[str, float], None] | None,
+        on_health: Callable[[str, float, int], None] | None,
     ) -> None:
         self._health = health
         self._on_health = on_health

@@ -22,14 +22,14 @@ def run_pulse_bridge(
     stop: threading.Event,
     on_ready=None,
     on_endpoints=None,
-    on_health: Callable[[str, float], None] | None = None,
+    on_health: Callable[[str, float, int], None] | None = None,
 ) -> int:
     if args.input is not None and getattr(args, "source", None) is not None:
         raise ValueError("Choose either --input or --source, not both.")
     microphone = select_microphone(args.input, getattr(args, "source", None))
     rate = model_native_sample_rate(args.model)
     block_size = rate // 50
-    health = InferenceHealth(on_health) if on_health is not None else None
+    health = InferenceHealth() if on_health is not None else None
     print(f"Input: {microphone.get('description', microphone['name'])}", flush=True)
     print("Loading bundled model...", flush=True)
     with RealtimeRuntimeManager(RuntimeTuningRequest(mode=args.realtime)) as realtime:
