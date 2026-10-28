@@ -262,8 +262,11 @@ class BridgeWindow(QMainWindow):
                 )
                 self.driver.setVisible(missing_driver)
                 self.install_driver.hide()
+                driver_registered = (
+                    vbcable.driver_installed() if missing_driver else False
+                )
                 if missing_driver:
-                    if vbcable.driver_installed():
+                    if driver_registered:
                         self.driver.setText(
                             "VB-CABLE isn't available as an audio device. "
                             "Restart Windows, check Sound settings, then click Refresh. "
@@ -288,7 +291,11 @@ class BridgeWindow(QMainWindow):
                     bool(message["microphones"]) and message["driver_ready"]
                 )
                 if missing_driver:
-                    self.status.setText("Finish VB-CABLE setup, then click Refresh.")
+                    self.status.setText(
+                        "Restart Windows, then click Refresh."
+                        if driver_registered
+                        else "Install VB-CABLE, restart Windows, then click Refresh."
+                    )
                 elif not message["microphones"]:
                     self.status.setText(
                         "No microphones found. Connect one and click Refresh."

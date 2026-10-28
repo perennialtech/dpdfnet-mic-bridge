@@ -17,7 +17,7 @@ processing. No Python or separate model download is needed.
 | Linux x86-64 | `*-linux-x86_64.AppImage` | `DPDFNet_Mic` |
 
 Automated checks do not guarantee compatibility with your microphone or audio
-driver.
+driver. Check each release's notes for any hardware testing.
 
 ### Windows
 
@@ -44,11 +44,12 @@ PulseAudio-compatible service. Do not run it with `sudo`. The bridge creates
 stop.
 
 Make the downloaded AppImage executable in your file manager and open it. If
-FUSE is unavailable, run it from a terminal instead:
+FUSE is unavailable, run it from a terminal instead, replacing
+`downloaded.AppImage` with the file you downloaded:
 
 ```sh
-chmod +x dpdfnet-mic-bridge-*-linux-x86_64.AppImage
-./dpdfnet-mic-bridge-*-linux-x86_64.AppImage --appimage-extract-and-run
+chmod +x ./downloaded.AppImage
+./downloaded.AppImage --appimage-extract-and-run
 ```
 
 Linux packages are built for Ubuntu 22.04 (glibc 2.35). Other distributions
@@ -75,11 +76,11 @@ If the bundled model is missing or damaged, reinstall the application.
 ## Command line
 
 On Windows, run `dpdfnet-mic-bridge-cli.exe` from the installation directory.
-On Linux, pass commands to the downloaded AppImage:
+On Linux, replace `downloaded.AppImage` with your AppImage's filename:
 
 ```sh
-./dpdfnet-mic-bridge-*-linux-x86_64.AppImage devices
-./dpdfnet-mic-bridge-*-linux-x86_64.AppImage run --input 15
+./downloaded.AppImage devices
+./downloaded.AppImage run --input 15
 ```
 
 Replace `15` with a microphone ID shown by `devices`. IDs can change after a

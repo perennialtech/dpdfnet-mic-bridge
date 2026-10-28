@@ -447,7 +447,34 @@ def test_missing_vbcable_without_bundled_setup_links_to_vendor(monkeypatch):
     assert window.install_driver.isHidden()
     assert "VB-Audio website" in window.driver.text()
     assert "below" not in window.driver.text()
-    assert "Finish VB-CABLE setup" in window.status.text()
+    assert "Install VB-CABLE, restart Windows" in window.status.text()
+    window.process = None
+    window.close()
+    app.processEvents()
+
+
+def test_registered_vbcable_without_audio_endpoints_recommends_restart(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr("dpdfnet_mic_bridge.desktop.platform.system", lambda: "Windows")
+    monkeypatch.setattr(vbcable, "driver_installed", lambda: True)
+    window = BridgeWindow()
+    window.mode = "inventory"
+    window.process = SimpleNamespace(
+        readAllStandardOutput=lambda: (
+            json.dumps(
+                {"microphones": [{"name": "Mic", "key": "1"}], "driver_ready": False}
+            )
+            + "\n"
+        ).encode()
+    )
+    window.read_output()
+    assert window.status.text() == "Restart Windows, then click Refresh."
+    assert "isn't available as an audio device" in window.driver.text()
+    assert window.install_driver.isHidden()
     window.process = None
     window.close()
     app.processEvents()
