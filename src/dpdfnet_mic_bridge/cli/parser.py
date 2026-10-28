@@ -18,12 +18,12 @@ from ..realtime_env.types import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "DPDFNet microphone bridge.\n"
+            "Reduce microphone background noise with DPDFNet.\n"
             "\n"
             "Examples:\n"
             "  dpdfnet-mic-bridge\n"
             "  dpdfnet-mic-bridge devices\n"
-            "  dpdfnet-mic-bridge --input 15 --output 19\n"
+            "  dpdfnet-mic-bridge run --input 15\n"
             "  dpdfnet-mic-bridge realtime status"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
@@ -35,11 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="{desktop,run,devices,realtime}",
     )
 
-    subparsers.add_parser("desktop", help="open the microphone bridge window")
+    subparsers.add_parser("desktop", help="open the desktop window")
 
     list_parser = subparsers.add_parser(
         "devices",
-        help="inspect microphones and advanced native devices",
+        help="list microphones and audio devices",
         formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "List microphone sources: PulseAudio on Linux, WASAPI on Windows.\n"
@@ -68,9 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser(
         "run",
-        help="run the live bridge",
+        help="stream microphone audio from the terminal",
         formatter_class=argparse.RawTextHelpFormatter,
-        description="Run the live mic -> DPDFNet -> virtual mic bridge.",
+        description="Stream processed microphone audio to a virtual microphone.",
     )
     run_parser.add_argument(
         "--input",
@@ -121,9 +121,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     realtime_parser = subparsers.add_parser(
         "realtime",
-        help="inspect or apply OS realtime prerequisites",
+        help="inspect or change OS realtime audio settings",
         formatter_class=argparse.RawTextHelpFormatter,
-        description="Inspect or apply OS-level realtime audio prerequisites.",
+        description="Inspect or change OS realtime audio settings.",
     )
     realtime_subparsers = realtime_parser.add_subparsers(
         dest="realtime_command",
