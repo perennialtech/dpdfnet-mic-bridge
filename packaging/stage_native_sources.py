@@ -62,48 +62,8 @@ def verify_file(path: Path, expected: dict) -> None:
         raise RuntimeError(f"Archived source checksum mismatch: {path.name}")
 
 
-def verify_cached_sources(packages: set[tuple[str, str]], destination: Path) -> None:
-    """Check cached sources against their Ubuntu source descriptors."""
-    descriptors = [(path, path.read_text()) for path in destination.glob("*.dsc")]
-    accounted_for = set()
-    for source, version in sorted(packages):
-        matches = []
-        for path, descriptor in descriptors:
-            try:
-                matches.append(
-                    (path, descriptor, parse_descriptor(descriptor, source, version))
-                )
-            except RuntimeError:
-                continue
-        if len(matches) != 1:
-            raise RuntimeError(f"Expected one cached descriptor for {source}={version}")
-        descriptor_path, descriptor, checksums = matches[0]
-        accounted_for.add(descriptor_path.name)
-        for name, integrity in checksums.items():
-            path = destination / name
-            if not path.is_file():
-                raise RuntimeError(f"Missing cached source file: {path.name}")
-            verify_file(path, integrity)
-            accounted_for.add(name)
-        record = re.sub(r"[^A-Za-z0-9._-]", "_", f"{source}-{version}") + "-source.json"
-        provenance_path = destination / record
-        if provenance_path.exists():
-            provenance = json.loads(provenance_path.read_text())
-            if (
-                provenance.get("source") != source
-                or provenance.get("version") != version
-                or provenance.get("descriptor_sha256")
-                != hashlib.sha256(descriptor.encode()).hexdigest()
-                or provenance.get("files") != checksums
-            ):
-                raise RuntimeError(f"Cached source provenance mismatch: {record}")
-            accounted_for.add(record)
-    extras = {path.name for path in destination.iterdir()} - accounted_for
-    if extras:
-        raise RuntimeError(f"Unexpected cached source files: {sorted(extras)}")
-
-
-def download_launchpad_sources(source: str, version: str, destination: Path) -> None:
+def published_source_descriptor(source: str, version: str):
+    """Fetch the exact published Jammy descriptor independently of the cache."""
     publication = None
     for status in ("Published", "Superseded", "Deleted"):
         query = urlencode(
@@ -158,6 +118,53 @@ def download_launchpad_sources(source: str, version: str, destination: Path) -> 
     if len(data) > 5_000_000:
         raise RuntimeError("Archived source descriptor is oversized")
     expected = parse_descriptor(data.decode("utf-8"), source, version)
+    return publication, files, descriptor, data, expected
+
+
+def verify_cached_sources(packages: set[tuple[str, str]], destination: Path) -> None:
+    """Check cached sources against fresh Ubuntu-published descriptors."""
+    accounted_for = set()
+    for source, version in sorted(packages):
+        publication, _, descriptor, data, checksums = published_source_descriptor(
+            source, version
+        )
+        descriptor_path = destination / descriptor
+        if not descriptor_path.is_file():
+            raise RuntimeError(f"Missing cached source descriptor: {descriptor}")
+        if descriptor_path.read_bytes() != data:
+            raise RuntimeError(
+                f"Cached source descriptor differs from Ubuntu: {descriptor}"
+            )
+        accounted_for.add(descriptor)
+        for name, integrity in checksums.items():
+            path = destination / name
+            if not path.is_file():
+                raise RuntimeError(f"Missing cached source file: {path.name}")
+            verify_file(path, integrity)
+            accounted_for.add(name)
+        record = re.sub(r"[^A-Za-z0-9._-]", "_", f"{source}-{version}") + "-source.json"
+        provenance_path = destination / record
+        if provenance_path.exists():
+            provenance = json.loads(provenance_path.read_text())
+            if (
+                provenance.get("publication") != publication["self_link"]
+                or provenance.get("source") != source
+                or provenance.get("version") != version
+                or provenance.get("descriptor_sha256")
+                != hashlib.sha256(data).hexdigest()
+                or provenance.get("files") != checksums
+            ):
+                raise RuntimeError(f"Cached source provenance mismatch: {record}")
+            accounted_for.add(record)
+    extras = {path.name for path in destination.iterdir()} - accounted_for
+    if extras:
+        raise RuntimeError(f"Unexpected cached source files: {sorted(extras)}")
+
+
+def download_launchpad_sources(source: str, version: str, destination: Path) -> None:
+    publication, files, descriptor, data, expected = published_source_descriptor(
+        source, version
+    )
     destination.mkdir(parents=True, exist_ok=True)
     (destination / descriptor).write_bytes(data)
     for name, integrity in expected.items():
