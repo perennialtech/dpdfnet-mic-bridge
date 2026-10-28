@@ -99,11 +99,27 @@ def test_cached_ubuntu_sources_are_verified(tmp_path, monkeypatch):
     (tmp_path / "example.dsc").write_text(descriptor)
     archive = tmp_path / "example.orig.tar.xz"
     archive.write_bytes(data)
+    record = tmp_path / "example-1_2.0-1-source.json"
+    record.write_text(
+        json.dumps(
+            {
+                "publication": module.ARCHIVE + "/+sourcepub/123",
+                "source": "example",
+                "version": "1:2.0-1",
+                "descriptor_sha256": hashlib.sha256(descriptor.encode()).hexdigest(),
+                "files": module.parse_descriptor(descriptor, "example", "1:2.0-1"),
+            }
+        )
+    )
     module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
     assert statuses == ["Published"]
     assert downloaded == [
         "https://launchpad.net/ubuntu/+archive/primary/+files/example.dsc"
     ]
+    record.write_text(record.read_text().replace("+sourcepub/123", "+sourcepub/999"))
+    with pytest.raises(RuntimeError, match="provenance mismatch"):
+        module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    record.write_text(record.read_text().replace("+sourcepub/999", "+sourcepub/123"))
     extra = tmp_path / "EXTRA-UNVERIFIED"
     extra.write_text("not a corresponding source")
     with pytest.raises(RuntimeError, match="Unexpected cached source files"):
@@ -129,6 +145,7 @@ def test_forged_descriptor_archive_and_provenance_are_rejected(tmp_path, monkeyp
     (tmp_path / "example-1_2.0-1-source.json").write_text(
         json.dumps(
             {
+                "publication": module.ARCHIVE + "/+sourcepub/123",
                 "source": "example",
                 "version": "1:2.0-1",
                 "descriptor_sha256": hashlib.sha256(forged.encode()).hexdigest(),
