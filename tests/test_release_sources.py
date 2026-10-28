@@ -96,7 +96,7 @@ def test_cached_ubuntu_sources_are_verified(tmp_path, monkeypatch):
     data = b"source"
     descriptor = source_descriptor(data)
     statuses, downloaded = mock_published_descriptor(module, monkeypatch, descriptor)
-    (tmp_path / "example.dsc").write_text(descriptor)
+    (tmp_path / "example.dsc").write_bytes(descriptor.encode())
     archive = tmp_path / "example.orig.tar.xz"
     archive.write_bytes(data)
     record = tmp_path / "example-1_2.0-1-source.json"
@@ -140,7 +140,7 @@ def test_forged_descriptor_archive_and_provenance_are_rejected(tmp_path, monkeyp
     authentic = source_descriptor(b"source")
     mock_published_descriptor(module, monkeypatch, authentic)
     forged = source_descriptor(b"forged")
-    (tmp_path / "example.dsc").write_text(forged)
+    (tmp_path / "example.dsc").write_bytes(forged.encode())
     (tmp_path / "example.orig.tar.xz").write_bytes(b"forged")
     (tmp_path / "example-1_2.0-1-source.json").write_text(
         json.dumps(
@@ -163,7 +163,7 @@ def test_superseded_jammy_cache_is_authenticated(tmp_path, monkeypatch):
     statuses, downloaded = mock_published_descriptor(
         module, monkeypatch, descriptor, status="Superseded"
     )
-    (tmp_path / "example.dsc").write_text(descriptor)
+    (tmp_path / "example.dsc").write_bytes(descriptor.encode())
     (tmp_path / "example.orig.tar.xz").write_bytes(b"source")
     module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
     assert statuses == ["Published", "Superseded"]
@@ -174,7 +174,7 @@ def test_cache_verification_fails_closed_without_publisher(tmp_path, monkeypatch
     module = helper("stage_native_sources")
     descriptor = source_descriptor(b"source")
     mock_published_descriptor(module, monkeypatch, descriptor)
-    (tmp_path / "example.dsc").write_text(descriptor)
+    (tmp_path / "example.dsc").write_bytes(descriptor.encode())
     (tmp_path / "example.orig.tar.xz").write_bytes(b"source")
 
     def unavailable(url):
