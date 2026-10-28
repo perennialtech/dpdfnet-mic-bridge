@@ -107,7 +107,8 @@ Use the Inno Setup version pinned in CI:
 
 ```powershell
 uv run --no-sync python packaging/stage_vbcable.py
-iscc /DAppVersion=0.2.0 packaging/dpdfnet-mic-bridge.iss
+$version = uv run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])'
+iscc "/DAppVersion=$version" packaging/dpdfnet-mic-bridge.iss
 ```
 
 The installer writes the application under the current user's Programs directory

@@ -81,19 +81,19 @@ def test_health_events_update_status_and_notify_once(monkeypatch):
     receive("degraded")
     receive("degraded")
     assert notified == [True]
-    assert "missing audio deadlines" in window.status.text()
+    assert "Audio processing can't keep up" in window.status.text()
     window.process = Process(b'{"event":"ready"}\n')
     window.read_output()
-    assert "missing audio deadlines" in window.status.text()
+    assert "Audio processing can't keep up" in window.status.text()
     receive("healthy")
     assert notified == [True]
-    assert window.status.text() == "Streaming enhanced microphone audio."
+    assert window.status.text() == "Noise reduction is on."
     receive("degraded", 8)
     receive("healthy", 7)
-    assert "missing audio deadlines" in window.status.text()
+    assert "Audio processing can't keep up" in window.status.text()
     assert notified == [True, True]
     receive("healthy", 9)
-    assert window.status.text() == "Streaming enhanced microphone audio."
+    assert window.status.text() == "Noise reduction is on."
     window.process = None
     window.close()
     app.processEvents()
@@ -138,7 +138,7 @@ def test_vbcable_installer_blocks_parallel_setup_and_retries_after_exit(monkeypa
     )
     window.read_output()
     window.process = None
-    assert "setup was launched" in window.driver.text()
+    assert "Complete VB-CABLE setup" in window.driver.text()
     assert window.install_driver.isHidden()
     window.install_vbcable()
     assert len(launches) == 1
@@ -147,7 +147,7 @@ def test_vbcable_installer_blocks_parallel_setup_and_retries_after_exit(monkeypa
     launches[0].active = False
     window.vbcable_setup_timer.timeout.emit()
     assert launches[0].closed
-    assert "setup closed" in window.driver.text()
+    assert "wasn't installed" in window.driver.text()
     assert not window.install_driver.isHidden()
     window.install_vbcable()
     assert len(launches) == 2
@@ -344,3 +344,137 @@ def test_closing_window_waits_for_running_notification(monkeypatch, tmp_path, ca
     assert not window._notification_processes
     app.processEvents()
     assert "Destroyed while process" not in capfd.readouterr().err
+
+
+def test_diagnostics_button_matches_visibility(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    window = BridgeWindow()
+    assert window.log.isHidden()
+    assert window.diagnostics.text() == "Show details"
+
+    window.diagnostics.click()
+    assert not window.log.isHidden()
+    assert window.diagnostics.text() == "Hide details"
+
+    window.diagnostics.click()
+    assert window.log.isHidden()
+    assert window.diagnostics.text() == "Show details"
+
+    window.show_diagnostics()
+    assert not window.log.isHidden()
+    assert window.diagnostics.text() == "Hide details"
+    window.close()
+    app.processEvents()
+
+
+def test_inventory_status_distinguishes_no_microphones_from_ready(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    window = BridgeWindow()
+    window.mode = "inventory"
+
+    def inventory(microphones):
+        window.process = SimpleNamespace(
+            readAllStandardOutput=lambda: (
+                json.dumps({"microphones": microphones, "driver_ready": True}) + "\n"
+            ).encode()
+        )
+        window.read_output()
+
+    inventory([])
+    assert (
+        window.status.text() == "No microphones found. Connect one and click Refresh."
+    )
+    assert not window.start.isEnabled()
+    inventory([{"name": "USB microphone", "key": "mic0"}])
+    assert window.status.text() == "Ready to start."
+    assert window.start.isEnabled()
+    window.process = None
+    window.close()
+    app.processEvents()
+
+
+def test_inventory_error_shows_details(monkeypatch):
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import QProcess
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    window = BridgeWindow()
+    window.mode = "inventory"
+    window.process = SimpleNamespace(
+        readAllStandardOutput=lambda: b"",
+        readAllStandardError=lambda: b"device enumeration failed\n",
+        deleteLater=lambda: None,
+    )
+    window.finished(2, QProcess.ExitStatus.CrashExit)
+    assert (
+        window.status.text()
+        == "Couldn't list microphones. Check details and click Refresh."
+    )
+    assert window.diagnostics.text() == "Hide details"
+    assert "device enumeration failed" in window.log.toPlainText()
+    window.close()
+    app.processEvents()
+
+
+def test_missing_vbcable_without_bundled_setup_links_to_vendor(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr("dpdfnet_mic_bridge.desktop.platform.system", lambda: "Windows")
+    monkeypatch.setattr(vbcable, "driver_installed", lambda: False)
+    monkeypatch.setattr(vbcable, "bundled_setup", lambda: None)
+    window = BridgeWindow()
+    window.mode = "inventory"
+    window.process = SimpleNamespace(
+        readAllStandardOutput=lambda: (
+            json.dumps(
+                {"microphones": [{"name": "Mic", "key": "1"}], "driver_ready": False}
+            )
+            + "\n"
+        ).encode()
+    )
+    window.read_output()
+    assert not window.start.isEnabled()
+    assert window.install_driver.isHidden()
+    assert "VB-Audio website" in window.driver.text()
+    assert "below" not in window.driver.text()
+    assert "Install VB-CABLE, restart Windows" in window.status.text()
+    window.process = None
+    window.close()
+    app.processEvents()
+
+
+def test_registered_vbcable_without_audio_endpoints_recommends_restart(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr("dpdfnet_mic_bridge.desktop.platform.system", lambda: "Windows")
+    monkeypatch.setattr(vbcable, "driver_installed", lambda: True)
+    window = BridgeWindow()
+    window.mode = "inventory"
+    window.process = SimpleNamespace(
+        readAllStandardOutput=lambda: (
+            json.dumps(
+                {"microphones": [{"name": "Mic", "key": "1"}], "driver_ready": False}
+            )
+            + "\n"
+        ).encode()
+    )
+    window.read_output()
+    assert window.status.text() == "Restart Windows, then click Refresh."
+    assert "isn't available as an audio device" in window.driver.text()
+    assert window.install_driver.isHidden()
+    window.process = None
+    window.close()
+    app.processEvents()

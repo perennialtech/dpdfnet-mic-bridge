@@ -75,5 +75,13 @@ jobs:
           TAG: ${{ inputs.tag }}
           RUN_ID: ${{ inputs.successful_run_id }}
         run: |
-          gh release create "$TAG" release/* --verify-tag --title "DPDFNet Mic Bridge ${TAG#v}" \
-            --notes "Windows x64 installer (unsigned) and Linux x86-64 AppImage include the default CPU model. Windows may display an unknown publisher / SmartScreen warning. Windows installer bundles standard VB-CABLE donationware by VB-Audio (www.vb-cable.com) with optional administrator-approved installation; restart Windows after installing it. Linux requires a PulseAudio-compatible desktop session. These binaries were built and verified by successful CI run $RUN_ID against the same application and packaging inputs as this tag. CI tests do not establish physical microphone or every desktop compatibility. Source archives, notices, and SHA-256 checksums are attached."
+          if [ ! -s .github/release-notes.md ]; then
+            echo "::error::Missing release notes in $TAG: .github/release-notes.md" >&2
+            exit 1
+          fi
+          notes="$(cat .github/release-notes.md)"
+          notes+=$'\n\n'
+          notes+="Packages from [verified CI run $RUN_ID](https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID)."
+          gh release create "$TAG" release/* --verify-tag \
+            --title "DPDFNet Mic Bridge ${TAG#v}" --generate-notes \
+            --notes "$notes"
