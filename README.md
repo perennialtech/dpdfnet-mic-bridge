@@ -1,129 +1,96 @@
 # DPDFNet Mic Bridge
 
-Use a noise-reduced microphone in Discord, OBS, games, or other calling apps.
-Choose your physical microphone in the desktop window, click **Start**, and
-select the bridge's virtual microphone in your calling app. Leave the window
-open while streaming; click **Stop** when finished.
+Reduce microphone background noise in calls, games, and recordings. Choose your
+microphone in DPDFNet Mic Bridge, click **Start**, then select the virtual
+microphone in your calling or recording app. Keep the bridge open while using it.
 
-## Download and start
+## Install
 
-Packaged releases include Python, native runtime dependencies, and the default
-`dpdfnet8_48khz_hr` model for offline CPU inference. You do not need Python, uv,
-Rust, PortAudio development files, or a separate model download.
+Download the latest package from
+[GitHub Releases](https://github.com/perennialtech/dpdfnet-mic-bridge/releases).
+Both packages include the application and its default model for offline CPU
+processing. No Python or separate model download is needed.
 
-Get the package for your platform from [GitHub Releases](https://github.com/perennialtech/dpdfnet-mic-bridge/releases):
-
-| Platform | Package | Microphone to select in your calling app |
+| Platform | Download | Microphone to select in other apps |
 | --- | --- | --- |
 | Windows 10/11 x64 | `*-windows-x64-setup.exe` | `CABLE Output` |
 | Linux x86-64 | `*-linux-x86_64.AppImage` | `DPDFNet_Mic` |
 
-Use only the compatibility claims and test results recorded for that release.
-CI artifacts are candidates, not evidence of real audio hardware testing.
-Windows installers are unsigned and may trigger SmartScreen warnings.
-
 ### Windows
 
-Run the installer, then open **DPDFNet Mic Bridge** from the Start menu. The
-application installs for your user without administrator access.
+Run the installer and open **DPDFNet Mic Bridge** from the Start menu.
 
-The Windows installer includes the **original VB-CABLE driver package** from
-[VB-Audio](https://www.vb-cable.com). On a fresh system, setup offers to launch
-its driver installer (with administrator approval). This is optional: the bridge
-itself still installs without administrator access. If you skip VB-CABLE, the
-bridge window offers **Install VB-CABLE** later. If the driver is already
-registered, neither path invokes the vendor installer, which could otherwise
-offer to remove it. Complete the VB-Audio setup and **restart Windows**, then
-click **Refresh** in the bridge. The bridge writes to `CABLE Input`; your
-calling app records from `CABLE Output`.
+The installer includes [VB-Audio's VB-CABLE](https://www.vb-cable.com), which the
+bridge uses as its virtual microphone. On a new installation, you can launch
+VB-Audio's driver installer during setup or use **Install VB-CABLE** in the
+bridge window later. Driver installation requires administrator approval and a
+Windows restart. After restarting, click **Refresh** in the bridge window.
 
-VB-CABLE is **donationware by VB-Audio**; all contributions are welcome.
-You can donate or purchase a license at [www.vb-cable.com](https://www.vb-cable.com).
-The driver is licensed separately from this MIT-licensed application. Professional
-and organizational deployments may require paid VB-Audio licenses; see
-[VB-Audio licensing](https://vb-audio.com/Services/licensing.htm).
-The bridge **never uninstalls VB-CABLE** because other apps can use it.
-Unattended bridge installations deliberately do not launch the driver setup;
-run VB-Audio's installer interactively if required. The bridge installer itself
-is unsigned; Windows may warn about an unknown publisher.
+VB-CABLE is a separate, donationware driver from VB-Audio. You can donate or
+purchase a license at [VB-Audio's website](https://www.vb-cable.com). Check
+[VB-Audio's licensing terms](https://vb-audio.com/Services/licensing.htm) for
+commercial or organizational use. The bridge never removes the driver, since
+other applications may use it. The DPDFNet Mic Bridge installer is unsigned,
+so Windows may show a SmartScreen warning.
 
 ### Linux
 
-Use an existing PulseAudio server or PipeWire with its PulseAudio-compatible
-service in your normal desktop session. Do not run the bridge with `sudo`.
-It creates and verifies `DPDFNet_Mic` when streaming starts and removes its own
-virtual endpoints when streaming stops. The desktop profile does not start an
-audio server or change global realtime settings.
+Run the AppImage in a desktop session with PulseAudio or PipeWire's
+PulseAudio-compatible service. Do not run it with `sudo`. The bridge creates
+`DPDFNet_Mic` while streaming and removes its virtual audio devices when you
+stop.
 
-The build baseline is Ubuntu 22.04 (glibc 2.35), not every Linux distribution.
-Your system must support the packaged Qt GUI and its desktop/display libraries.
-Mark the AppImage executable in your file manager, then open it. If FUSE is
-unavailable, open a terminal in the download directory and use:
+Make the downloaded AppImage executable in your file manager and open it. If
+FUSE is unavailable, run it from a terminal instead:
 
 ```sh
-chmod +x dpdfnet-mic-bridge-0.3.0-linux-x86_64.AppImage
-./dpdfnet-mic-bridge-0.3.0-linux-x86_64.AppImage --appimage-extract-and-run
+chmod +x dpdfnet-mic-bridge-*-linux-x86_64.AppImage
+./dpdfnet-mic-bridge-*-linux-x86_64.AppImage --appimage-extract-and-run
 ```
 
-Replace the version with your downloaded filename. The image includes its
-PulseAudio client utilities; installing `pactl` separately is not required.
+Linux packages are built for Ubuntu 22.04 (glibc 2.35). Other distributions
+may work but are not guaranteed to be compatible.
 
 ## Troubleshooting
 
-The desktop window warns after repeated inference deadline misses (at least 25%
-over a five-second audio window), sustained throughput below real time, or a
-single inference call stalled for five seconds. On native audio routes, it also
-warns when output underruns or drops continue for five seconds. It sends one
-notification per
-degradation episode, then waits for sustained recovery before alerting again.
-An isolated completed cold-start spike does not count as repeated misses; an
-in-progress five-second stall is reported because audio output has stopped.
-On Linux, system notifications use `notify-send` where available, falling back
-to the tray when the command fails. The window status remains visible even if
-no system notification service is available.
+Open **Show details** in the bridge window to see errors.
 
-Open **Show/hide diagnostics** to see startup and streaming errors. If a
-microphone is disconnected or renamed, stop and click **Refresh**. On Windows,
-confirm both VB-CABLE endpoints appear in Windows sound settings. On Linux,
-confirm the desktop audio session permits null sinks and remapped capture
-sources. A monitor-only fallback is not accepted as successful setup.
+- **No microphone listed:** Connect or enable your microphone, then click
+  **Refresh**. If a device was disconnected while streaming, stop first.
+- **Windows virtual microphone missing:** Complete VB-CABLE installation,
+  restart Windows, and click **Refresh**. Check the Windows sound settings for
+  both `CABLE Input` and `CABLE Output`.
+- **Linux virtual microphone missing:** Check that your desktop audio session
+  is running and allows virtual sinks and capture sources.
+- **Audio processing warning:** The computer is struggling to keep up with
+  inference. Reduce CPU load and check **Show details** for errors.
 
-The package does not claim CUDA/GPU support. Audio is processed as mono:
-microphone channels are downmixed rather than preserved as stereo. There is no beamforming, channel selector, automatic
-gain control, or separate limiter policy.
+Processing is CPU-only and uses mono audio. The bridge does not provide GPU
+acceleration, beamforming, automatic gain control, or a separate limiter.
+If the bundled model is missing or damaged, reinstall the application.
 
-Application files and the default model are read-only runtime assets. Numba's
-cache uses `%LOCALAPPDATA%\dpdfnet-mic-bridge\numba` on Windows and
-`${XDG_CACHE_HOME:-~/.cache}/dpdfnet-mic-bridge/numba` on Linux. Reinstall if the
-bundled model is reported missing or damaged.
+## Command line
 
-## Command-line use
-
-On Windows, use `dpdfnet-mic-bridge-cli.exe` in the installation directory for
-terminal commands. On Linux, pass commands to the AppImage:
+On Windows, run `dpdfnet-mic-bridge-cli.exe` from the installation directory.
+On Linux, pass commands to the downloaded AppImage:
 
 ```sh
-./dpdfnet-mic-bridge-0.3.0-linux-x86_64.AppImage devices
-./dpdfnet-mic-bridge-0.3.0-linux-x86_64.AppImage run --input 15
+./dpdfnet-mic-bridge-*-linux-x86_64.AppImage devices
+./dpdfnet-mic-bridge-*-linux-x86_64.AppImage run --input 15
 ```
 
-Replace `15` with a current microphone ID from `devices`. Linux IDs refer to
-PulseAudio sources; Windows IDs refer to native PortAudio/WASAPI devices. IDs can change after reconnecting a device or restarting
-the audio session. Stop a terminal stream with `Ctrl+C`.
+Replace `15` with a microphone ID shown by `devices`. IDs can change after a
+microphone is reconnected or the audio session restarts. Stop streaming with
+`Ctrl+C`.
 
-The basic view uses only the bundled model. Advanced users can supply other
-locally obtained ONNX models through `DPDFNET_MODEL_DIR` and `run --model`; the
-application never silently downloads them. Use `--help` for the full command
-reference. Manual native routes and realtime tuning are advanced features
-described in [CONTRIBUTING.md](CONTRIBUTING.md).
+Run `--help` or `run --help` for the available options. For other locally
+obtained ONNX models, set `DPDFNET_MODEL_DIR` and use `run --model`. The bridge
+does not download models automatically.
 
-## Source builds and licenses
+## Source and licenses
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, source installation,
-tests, packaging, and release checks. The application is MIT licensed;
-dependencies and model weights have their own licenses. See the
-[third-party notices](packaging/THIRD_PARTY_NOTICES.md) and each release's bundled
-`notices` directory. Source downloads are bundled into Qt, Ubuntu client-library,
-and third-party notices/Rust source archives rather than individual package files.
-Upstream model information is available from
-[Ceva's DPDFNet project](https://github.com/ceva-ip/DPDFNet).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for source builds, tests, advanced audio
+options, and release verification. DPDFNet Mic Bridge is MIT-licensed. Its
+model, libraries, and VB-CABLE have separate terms; see the
+[third-party notices](packaging/THIRD_PARTY_NOTICES.md) and the notices supplied
+with each release. For the upstream model, see [Ceva's DPDFNet](https://github.com/ceva-ip/DPDFNet).
