@@ -8,6 +8,20 @@ from dpdfnet_mic_bridge import vbcable
 from dpdfnet_mic_bridge.desktop import BridgeWindow
 
 
+class VendorSetup:
+    def __init__(self):
+        self.active = True
+        self.closed = False
+
+    def running(self):
+        if not self.active:
+            self.closed = True
+        return self.active
+
+    def close(self):
+        self.closed = True
+
+
 def test_window_has_no_basic_model_or_output_controls(monkeypatch):
     app = QApplication.instance() or QApplication([])
     # Qt signal connections need a real callable, not unittest.mock objects.
@@ -63,7 +77,7 @@ def test_health_events_update_status_and_notify_once(monkeypatch):
     app.processEvents()
 
 
-def test_vbcable_installer_launches_only_once_even_after_refresh(monkeypatch):
+def test_vbcable_installer_blocks_parallel_setup_and_retries_after_exit(monkeypatch):
     import json
     from types import SimpleNamespace
 
@@ -77,13 +91,19 @@ def test_vbcable_installer_launches_only_once_even_after_refresh(monkeypatch):
     )
     monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
     launches = []
-    monkeypatch.setattr(vbcable, "launch_setup", lambda: launches.append("launched"))
+
+    def launch():
+        process = VendorSetup()
+        launches.append(process)
+        return process
+
+    monkeypatch.setattr(vbcable, "launch_setup", launch)
 
     window = BridgeWindow()
     window.install_driver.setVisible(True)
     window.install_vbcable()
-    assert launches == ["launched"]
-    assert window.vbcable_setup_launched
+    assert len(launches) == 1
+    assert window.vbcable_setup_running()
     assert window.install_driver.isHidden()
 
     window.install_vbcable()
@@ -99,7 +119,53 @@ def test_vbcable_installer_launches_only_once_even_after_refresh(monkeypatch):
     assert "setup was launched" in window.driver.text()
     assert window.install_driver.isHidden()
     window.install_vbcable()
-    assert launches == ["launched"]
+    assert len(launches) == 1
+
+    # Vendor GUI has exited without registering the service (Cancel/Failure).
+    launches[0].active = False
+    window.vbcable_setup_timer.timeout.emit()
+    assert launches[0].closed
+    assert "setup closed" in window.driver.text()
+    assert not window.install_driver.isHidden()
+    window.install_vbcable()
+    assert len(launches) == 2
+    assert window.vbcable_setup_running()
+    assert window.install_driver.isHidden()
+
+    window.close()
+    app.processEvents()
+    assert launches[1].closed
+
+
+def test_vbcable_registered_after_setup_exit_cannot_launch_vendor_uninstaller(
+    monkeypatch,
+):
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    installed = [False]
+    monkeypatch.setattr(vbcable, "driver_installed", lambda: installed[0])
+    monkeypatch.setattr(vbcable, "bundled_setup", lambda: "vendor-installer")
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *_: QMessageBox.StandardButton.Yes
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *_: None)
+    process = VendorSetup()
+    launches = []
+    monkeypatch.setattr(
+        vbcable, "launch_setup", lambda: (launches.append(True), process)[1]
+    )
+    window = BridgeWindow()
+    window.driver.setVisible(True)
+    window.install_vbcable()
+    assert launches == [True]
+
+    process.active = False
+    installed[0] = True
+    window.check_vbcable_setup()
+    assert "registered" in window.driver.text()
+    assert window.install_driver.isHidden()
+    window.install_vbcable()  # Bypassing the disabled button is also safe.
+    assert launches == [True]
 
     window.close()
     app.processEvents()
@@ -161,14 +227,15 @@ def test_vbcable_failed_launch_allows_retry(monkeypatch):
         launches.append("attempt")
         if len(launches) == 1:
             raise OSError("UAC declined")
+        return VendorSetup()
 
     monkeypatch.setattr(vbcable, "launch_setup", launch)
     window = BridgeWindow()
     window.install_vbcable()
-    assert not window.vbcable_setup_launched
+    assert not window.vbcable_setup_running()
     window.install_vbcable()
     assert launches == ["attempt", "attempt"]
-    assert window.vbcable_setup_launched
+    assert window.vbcable_setup_running()
 
     window.close()
     app.processEvents()

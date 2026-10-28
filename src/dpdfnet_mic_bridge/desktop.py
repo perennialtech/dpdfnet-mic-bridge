@@ -41,7 +41,7 @@ class BridgeWindow(QMainWindow):
         self.worker_failed = False
         self.inference_degraded = False
         self._notification_processes = set()
-        self.vbcable_setup_launched = False
+        self.vbcable_setup_process = None
         self.status = QLabel("Looking for microphones…")
         self.tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -102,6 +102,8 @@ class BridgeWindow(QMainWindow):
         self.deadline = QTimer(self)
         self.deadline.setSingleShot(True)
         self.deadline.timeout.connect(self.force_stop)
+        self.vbcable_setup_timer = QTimer(self)
+        self.vbcable_setup_timer.timeout.connect(self.check_vbcable_setup)
         QTimer.singleShot(0, self.discover)
 
     def spawn(self, mode, arguments):
@@ -143,7 +145,7 @@ class BridgeWindow(QMainWindow):
         )
 
     def install_vbcable(self):
-        if self.vbcable_setup_launched:
+        if self.vbcable_setup_running():
             return
         if vbcable.driver_installed():
             QMessageBox.information(
@@ -164,14 +166,15 @@ class BridgeWindow(QMainWindow):
             != QMessageBox.StandardButton.Yes
         ):
             return
+        # The service may have registered while the confirmation was open.
+        if self.vbcable_setup_running():
+            return
         try:
-            vbcable.launch_setup()
+            self.vbcable_setup_process = vbcable.launch_setup()
         except (OSError, RuntimeError) as exc:
             QMessageBox.warning(self, "VB-CABLE installation", str(exc))
             return
-        # The vendor setup can still be running when ShellExecuteW returns.
-        # Keep the action disabled for this session, even across Refresh.
-        self.vbcable_setup_launched = True
+        self.vbcable_setup_timer.start(1000)
         self.install_driver.hide()
         QMessageBox.information(
             self,
@@ -180,6 +183,37 @@ class BridgeWindow(QMainWindow):
             "then return here and click Refresh. DPDFNet Mic Bridge will never "
             "uninstall this shared driver.",
         )
+
+    def vbcable_setup_running(self):
+        if self.vbcable_setup_process is None:
+            return False
+        try:
+            if self.vbcable_setup_process.running():
+                return True
+        except OSError as exc:
+            # An unknown state must not permit a second vendor setup.
+            self.vbcable_setup_timer.stop()
+            self.log.appendPlainText(str(exc))
+            return True
+        self.vbcable_setup_process = None
+        self.vbcable_setup_timer.stop()
+        return False
+
+    def check_vbcable_setup(self):
+        if self.vbcable_setup_running() or self.driver.isHidden():
+            return
+        if vbcable.driver_installed():
+            self.driver.setText(
+                "VB-CABLE is registered but its audio endpoints may need a restart. "
+                "Restart Windows, then Refresh."
+            )
+            self.install_driver.hide()
+        else:
+            self.driver.setText(
+                "VB-CABLE setup closed without registering the driver. "
+                "You can retry installation, or Refresh after restarting Windows."
+            )
+            self.install_driver.setVisible(vbcable.bundled_setup() is not None)
 
     def stop_bridge(self):
         if self.process is None:
@@ -232,14 +266,14 @@ class BridgeWindow(QMainWindow):
                             "VB-Audio website</a>. Installation needs administrator "
                             "approval and a restart."
                         )
-                        if self.vbcable_setup_launched:
+                        running = self.vbcable_setup_running()
+                        if running:
                             self.driver.setText(
                                 "VB-CABLE setup was launched. Complete installation "
                                 "in the VB-Audio window, restart Windows, then Refresh."
                             )
                         self.install_driver.setVisible(
-                            not self.vbcable_setup_launched
-                            and vbcable.bundled_setup() is not None
+                            not running and vbcable.bundled_setup() is not None
                         )
                 self.start.setEnabled(
                     bool(message["microphones"]) and message["driver_ready"]
@@ -399,6 +433,10 @@ class BridgeWindow(QMainWindow):
                 self.process.kill()
             event.ignore()
         else:
+            self.vbcable_setup_timer.stop()
+            if self.vbcable_setup_process is not None:
+                self.vbcable_setup_process.close()
+                self.vbcable_setup_process = None
             # QTimer callbacks must never dereference a notifier destroyed
             # alongside the closing window.
             for notifier in tuple(self._notification_processes):
