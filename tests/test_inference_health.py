@@ -233,6 +233,24 @@ def test_isolated_native_output_faults_do_not_notify():
     ] * 7
 
 
+def test_stalled_inference_cannot_recover_while_output_faults_clear(monkeypatch):
+    from dpdfnet_mic_bridge.bridge import health
+
+    monitor = InferenceHealth()
+    assert monitor.observe_output_faults(0, now=0) is None
+    transitions = [monitor.observe_output_faults(i, now=i * 0.1) for i in range(1, 66)]
+    assert [event[0] for event in transitions if event] == ["degraded"]
+
+    monkeypatch.setattr(health.time, "monotonic", lambda: 10.0)
+    monitor.begin_inference()
+    monkeypatch.setattr(health.time, "monotonic", lambda: 16.0)
+    assert monitor.check_stall() is None
+    # Output recovers, but inference remains blocked. Neither a false healthy
+    # event nor a second degraded notification should be generated.
+    assert monitor.observe_output_faults(65, now=16.0) is None
+    assert monitor.check_stall() is None
+
+
 def test_stalled_pulse_inference_is_detected_before_process_returns(monkeypatch):
     from dpdfnet_mic_bridge.bridge import health, pulse_runner
 

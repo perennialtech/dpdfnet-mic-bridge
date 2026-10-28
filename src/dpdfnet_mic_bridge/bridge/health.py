@@ -142,7 +142,7 @@ class InferenceHealth:
             started = self._inference_started
             if (
                 started is None
-                or self._degraded
+                or self._slow_degraded
                 or time.monotonic() - started < STALL_SECONDS
             ):
                 return None
