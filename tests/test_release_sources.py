@@ -183,3 +183,17 @@ def test_cache_verification_fails_closed_without_publisher(tmp_path, monkeypatch
     monkeypatch.setattr(module, "request", unavailable)
     with pytest.raises(URLError, match="publisher unavailable"):
         module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+
+
+def test_publisher_redirect_must_remain_https(monkeypatch):
+    module = helper("stage_native_sources")
+
+    class RedirectedResponse(BytesIO):
+        def geturl(self):
+            return "http://launchpadlibrarian.net/example.dsc"
+
+    response = RedirectedResponse(b"untrusted")
+    monkeypatch.setattr(module, "urlopen", lambda request, timeout: response)
+    with pytest.raises(RuntimeError, match="outside HTTPS"):
+        module.request("https://launchpad.net/example.dsc")
+    assert response.closed

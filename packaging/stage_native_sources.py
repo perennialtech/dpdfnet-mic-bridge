@@ -17,10 +17,14 @@ ARCHIVE = "https://api.launchpad.net/1.0/ubuntu/+archive/primary"
 
 
 def request(url: str):
-    return urlopen(
+    response = urlopen(
         Request(url, headers={"User-Agent": "dpdfnet-mic-bridge-release-builder"}),
         timeout=120,
     )
+    if urlsplit(response.geturl()).scheme != "https":
+        response.close()
+        raise RuntimeError("Ubuntu publisher download redirected outside HTTPS")
+    return response
 
 
 def read_json(url: str):
