@@ -351,3 +351,41 @@ def test_stalled_pulse_inference_is_detected_before_process_returns(monkeypatch)
         thread.join(timeout=2)
     assert not thread.is_alive()
     assert not errors
+
+
+def test_concurrent_health_callbacks_follow_state_transitions():
+    """A slow recovery callback must not overtake a new overload transition."""
+    entered = threading.Event()
+    release = threading.Event()
+    events = []
+
+    def on_health(state, rtf):
+        if state == "healthy":
+            entered.set()
+            assert release.wait(2)
+        events.append(state)
+
+    monitor = InferenceHealth(on_health)
+    monitor.observe_output_faults(0, now=0)
+    for index in range(1, 66):
+        monitor.observe_output_faults(index, now=index * 0.1)
+    assert events == ["degraded"]
+
+    recovering = threading.Thread(
+        target=lambda: monitor.observe_output_faults(65, now=12)
+    )
+    recovering.start()
+    try:
+        assert entered.wait(1)
+        overloading = threading.Thread(
+            target=lambda: [monitor.observe(0.2, 0.02) for _ in range(30)]
+        )
+        overloading.start()
+        assert events == ["degraded"]
+    finally:
+        release.set()
+        recovering.join(timeout=2)
+    overloading.join(timeout=2)
+    assert not recovering.is_alive()
+    assert not overloading.is_alive()
+    assert events == ["degraded", "healthy", "degraded"]

@@ -324,14 +324,14 @@ class BridgeWindow(QMainWindow):
 
     def _notification_timeout(self, process):
         if process in self._notification_processes:
+            # Wait for QProcess.finished before releasing the running child.
             process.kill()
-            self._complete_notification(process, False)
 
     def _complete_notification(self, process, succeeded):
         if process not in self._notification_processes:
             return
         self._notification_processes.remove(process)
-        if not succeeded:
+        if not succeeded and not self.closing:
             self._notification_fallback(
                 "DPDFNet Mic Bridge",
                 "Inference is missing audio deadlines; your microphone may stutter.",
@@ -399,13 +399,14 @@ class BridgeWindow(QMainWindow):
                 self.process.kill()
             event.ignore()
         else:
-            # QTimer callbacks must never dereference a notifier destroyed
-            # alongside the closing window.
+            # Finish outstanding notification processes before destroying
+            # the window. QProcess must not be deleted while still running.
+            self.closing = True
             for notifier in tuple(self._notification_processes):
-                self._notification_processes.remove(notifier)
                 if notifier.state() != QProcess.ProcessState.NotRunning:
                     notifier.kill()
-                notifier.deleteLater()
+                    notifier.waitForFinished()
+                self._complete_notification(notifier, True)
             event.accept()
 
 

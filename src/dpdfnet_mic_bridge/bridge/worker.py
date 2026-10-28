@@ -43,7 +43,7 @@ class EnhancementWorker:
         self._read_timeout_ms = read_timeout_ms
         self._block_seconds = float(block_size) / float(sample_rate)
         self._realtime_request = realtime_request or RuntimeTuningRequest(mode="off")
-        self._health = InferenceHealth() if on_health is not None else None
+        self._health = InferenceHealth(on_health) if on_health is not None else None
         self._on_health = on_health
         self._watchdog = HealthWatchdog(self._health, on_health)
 

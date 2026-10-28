@@ -172,3 +172,77 @@ def test_vbcable_failed_launch_allows_retry(monkeypatch):
 
     window.close()
     app.processEvents()
+
+
+def test_notify_send_timeout_waits_for_child_exit(monkeypatch, tmp_path, capfd):
+    import time
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import QProcess
+
+    from dpdfnet_mic_bridge import desktop
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Linux")
+    notifier = tmp_path / "notify-send"
+    notifier.write_text("#!/bin/sh\nsleep 30\n")
+    notifier.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ.get('PATH', '')}")
+    window = BridgeWindow()
+    messages = []
+    window.tray = SimpleNamespace(showMessage=lambda *args: messages.append(args))
+    window.notify_overload()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if window._notification_processes:
+            process = next(iter(window._notification_processes))
+            if process.state() == QProcess.ProcessState.Running:
+                break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("notify-send did not start")
+
+    window._notification_timeout(process)
+    deadline = time.monotonic() + 3
+    while window._notification_processes and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert not window._notification_processes
+    assert len(messages) == 1
+    window.close()
+    app.processEvents()
+    assert "Destroyed while process" not in capfd.readouterr().err
+
+
+def test_closing_window_waits_for_running_notification(monkeypatch, tmp_path, capfd):
+    import time
+
+    from PySide6.QtCore import QProcess
+
+    from dpdfnet_mic_bridge import desktop
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Linux")
+    notifier = tmp_path / "notify-send"
+    notifier.write_text("#!/bin/sh\nsleep 30\n")
+    notifier.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ.get('PATH', '')}")
+    window = BridgeWindow()
+    window.notify_overload()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if window._notification_processes:
+            process = next(iter(window._notification_processes))
+            if process.state() == QProcess.ProcessState.Running:
+                break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("notify-send did not start")
+    window.close()
+    app.processEvents()
+    assert not window._notification_processes
+    assert "Destroyed while process" not in capfd.readouterr().err

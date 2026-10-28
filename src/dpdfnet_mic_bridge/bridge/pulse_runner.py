@@ -29,7 +29,7 @@ def run_pulse_bridge(
     microphone = select_microphone(args.input, getattr(args, "source", None))
     rate = model_native_sample_rate(args.model)
     block_size = rate // 50
-    health = InferenceHealth() if on_health is not None else None
+    health = InferenceHealth(on_health) if on_health is not None else None
     print(f"Input: {microphone.get('description', microphone['name'])}", flush=True)
     print("Loading bundled model...", flush=True)
     with RealtimeRuntimeManager(RuntimeTuningRequest(mode=args.realtime)) as realtime:

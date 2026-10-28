@@ -18,8 +18,11 @@ MIN_OVERLOAD_SAMPLES = 5
 
 
 class InferenceHealth:
-    def __init__(self) -> None:
+    def __init__(
+        self, on_transition: Callable[[str, float], None] | None = None
+    ) -> None:
         self._lock = threading.Lock()
+        self._on_transition = on_transition
         self._samples: deque[tuple[float, float, bool]] = deque()
         self._inference_seconds = 0.0
         self._audio_seconds = 0.0
@@ -99,7 +102,13 @@ class InferenceHealth:
         if degraded == self._degraded:
             return None
         self._degraded = degraded
-        return ("degraded" if degraded else "healthy"), rtf
+        transition = ("degraded" if degraded else "healthy"), rtf
+        if self._on_transition is not None:
+            # Dispatch while holding the monitor lock so watchdog and audio
+            # threads cannot publish recovery and overload out of order.
+            self._on_transition(*transition)
+            return None
+        return transition
 
     def observe_output_faults(
         self, cumulative_faults: int, *, now: float | None = None
