@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import importlib.util
 import io
@@ -95,23 +96,90 @@ def test_elevated_launch_and_declined_elevation(monkeypatch, tmp_path):
     monkeypatch.setattr(vbcable, "driver_installed", lambda: False)
     monkeypatch.setattr(vbcable, "bundled_setup", lambda: setup)
     launches = []
+    waits = []
+    closes = []
+    result = [True]
+    state = [vbcable.WAIT_TIMEOUT, vbcable.WAIT_OBJECT_0]
+    handle = 0x123456789ABC
 
-    def invoke(*args):
-        launches.append(args)
-        return 42
+    def invoke(pointer):
+        info = ctypes.cast(pointer, ctypes.POINTER(vbcable.SHELLEXECUTEINFOW)).contents
+        launches.append(
+            (
+                info.cbSize,
+                info.fMask,
+                info.lpVerb,
+                info.lpFile,
+                info.lpDirectory,
+                info.nShow,
+            )
+        )
+        if result[0]:
+            info.hProcess = handle
+        return result[0]
 
+    def wait(process, timeout):
+        waits.append((process, timeout))
+        return state.pop(0)
+
+    def close(process):
+        closes.append(process)
+        return True
+
+    dlls = {
+        "shell32": types.SimpleNamespace(ShellExecuteExW=invoke),
+        "kernel32": types.SimpleNamespace(WaitForSingleObject=wait, CloseHandle=close),
+    }
     monkeypatch.setattr(
-        vbcable.ctypes,
-        "windll",
-        types.SimpleNamespace(shell32=types.SimpleNamespace(ShellExecuteW=invoke)),
-        raising=False,
+        vbcable.ctypes, "WinDLL", lambda name, use_last_error: dlls[name], raising=False
     )
-    vbcable.launch_setup()
-    assert launches == [(None, "runas", str(setup), None, str(tmp_path), 1)]
+    monkeypatch.setattr(vbcable.ctypes, "get_last_error", lambda: 5, raising=False)
 
-    monkeypatch.setattr(vbcable.ctypes.windll.shell32, "ShellExecuteW", lambda *_: 5)
+    process = vbcable.launch_setup()
+    assert launches == [
+        (
+            ctypes.sizeof(vbcable.SHELLEXECUTEINFOW),
+            vbcable.SEE_MASK_NOCLOSEPROCESS,
+            "runas",
+            str(setup),
+            str(tmp_path),
+            1,
+        )
+    ]
+    assert process.running()
+    assert not process.running()
+    assert not process.running()
+    assert waits == [(handle, 0), (handle, 0)]
+    assert closes == [handle]
+
+    result[0] = False
     with pytest.raises(OSError, match="error 5"):
         vbcable.launch_setup()
+
+
+def test_untrackable_or_unknown_vendor_process_never_allows_parallel_setup(
+    monkeypatch,
+):
+    waits = []
+
+    def wait(*args):
+        waits.append(args)
+        return 0xFFFFFFFF  # WAIT_FAILED
+
+    kernel = types.SimpleNamespace(WaitForSingleObject=wait, CloseHandle=lambda _: True)
+    monkeypatch.setattr(
+        vbcable.ctypes,
+        "WinDLL",
+        lambda name, use_last_error: kernel,
+        raising=False,
+    )
+    monkeypatch.setattr(vbcable.ctypes, "get_last_error", lambda: 6, raising=False)
+    assert vbcable.SetupProcess(None).running()
+    process = vbcable.SetupProcess(123)
+    with pytest.raises(OSError, match="error 6"):
+        process.running()
+    assert process.handle == 123
+    assert waits == [(123, 0)]
 
 
 def test_packaging_pinned_to_vendor_binary():
