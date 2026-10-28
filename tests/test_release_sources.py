@@ -58,6 +58,11 @@ def test_cached_ubuntu_sources_are_verified(tmp_path):
     archive = tmp_path / "example.orig.tar.xz"
     archive.write_bytes(data)
     module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    extra = tmp_path / "EXTRA-UNVERIFIED"
+    extra.write_text("not a corresponding source")
+    with pytest.raises(RuntimeError, match="Unexpected cached source files"):
+        module.verify_cached_sources({("example", "1:2.0-1")}, tmp_path)
+    extra.unlink()
     with pytest.raises(RuntimeError, match="Expected one cached descriptor"):
         module.verify_cached_sources({("example", "other-version")}, tmp_path)
     archive.write_bytes(b"broken")

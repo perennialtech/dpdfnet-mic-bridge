@@ -64,21 +64,43 @@ def verify_file(path: Path, expected: dict) -> None:
 
 def verify_cached_sources(packages: set[tuple[str, str]], destination: Path) -> None:
     """Check cached sources against their Ubuntu source descriptors."""
-    descriptors = [path.read_text() for path in destination.glob("*.dsc")]
+    descriptors = [(path, path.read_text()) for path in destination.glob("*.dsc")]
+    accounted_for = set()
     for source, version in sorted(packages):
         matches = []
-        for descriptor in descriptors:
+        for path, descriptor in descriptors:
             try:
-                matches.append(parse_descriptor(descriptor, source, version))
+                matches.append(
+                    (path, descriptor, parse_descriptor(descriptor, source, version))
+                )
             except RuntimeError:
                 continue
         if len(matches) != 1:
             raise RuntimeError(f"Expected one cached descriptor for {source}={version}")
-        for name, integrity in matches[0].items():
+        descriptor_path, descriptor, checksums = matches[0]
+        accounted_for.add(descriptor_path.name)
+        for name, integrity in checksums.items():
             path = destination / name
             if not path.is_file():
                 raise RuntimeError(f"Missing cached source file: {path.name}")
             verify_file(path, integrity)
+            accounted_for.add(name)
+        record = re.sub(r"[^A-Za-z0-9._-]", "_", f"{source}-{version}") + "-source.json"
+        provenance_path = destination / record
+        if provenance_path.exists():
+            provenance = json.loads(provenance_path.read_text())
+            if (
+                provenance.get("source") != source
+                or provenance.get("version") != version
+                or provenance.get("descriptor_sha256")
+                != hashlib.sha256(descriptor.encode()).hexdigest()
+                or provenance.get("files") != checksums
+            ):
+                raise RuntimeError(f"Cached source provenance mismatch: {record}")
+            accounted_for.add(record)
+    extras = {path.name for path in destination.iterdir()} - accounted_for
+    if extras:
+        raise RuntimeError(f"Unexpected cached source files: {sorted(extras)}")
 
 
 def download_launchpad_sources(source: str, version: str, destination: Path) -> None:
