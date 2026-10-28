@@ -68,3 +68,99 @@ def test_desktop_child_uses_utf8_for_redirected_output(monkeypatch):
     stream.flush()
     assert stream.encoding == "utf-8"
     assert "麦克风".encode() in output.getvalue()
+
+
+def test_desktop_worker_forwards_health_events_without_audio_thread_io(
+    monkeypatch, capsys
+):
+    import io
+    import json
+    from dpdfnet_mic_bridge import desktop_process
+    from dpdfnet_mic_bridge.bridge import runner
+
+    monkeypatch.setattr(desktop_process.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    def fake_run(args, stop, ready, endpoints, health):
+        health("degraded", 1.4)
+        health("healthy", 0.7)
+        return 0
+
+    monkeypatch.setattr(runner, "run_bridge", fake_run)
+    assert (
+        desktop_process.internal_command(
+            ["_desktop-worker", "--device", "test-microphone"]
+        )
+        == 0
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events == [
+        {"event": "inference_health", "state": "degraded", "rtf": 1.4},
+        {"event": "inference_health", "state": "healthy", "rtf": 0.7},
+    ]
+
+
+def test_desktop_worker_serializes_concurrent_json_events(monkeypatch, capsys):
+    import io
+    import json
+    import threading
+    from dpdfnet_mic_bridge import desktop_process
+    from dpdfnet_mic_bridge.bridge import runner
+
+    monkeypatch.setattr(desktop_process.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    def fake_run(args, stop, ready, endpoints, health):
+        def signal_ready():
+            for _ in range(100):
+                ready()
+
+        thread = threading.Thread(target=signal_ready)
+        thread.start()
+        for _ in range(100):
+            health("degraded", 1.4)
+        thread.join()
+        return 0
+
+    monkeypatch.setattr(runner, "run_bridge", fake_run)
+    assert (
+        desktop_process.internal_command(
+            ["_desktop-worker", "--device", "test-microphone"]
+        )
+        == 0
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert len(events) == 200
+    assert sum(event["event"] == "ready" for event in events) == 100
+    assert sum(event["event"] == "inference_health" for event in events) == 100
+
+
+def test_desktop_worker_diagnostics_cannot_corrupt_health_events(monkeypatch, capsys):
+    import io
+    import json
+    from dpdfnet_mic_bridge import desktop_process
+    from dpdfnet_mic_bridge.bridge import runner
+
+    monkeypatch.setattr(desktop_process.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    def fake_run(args, stop, ready, endpoints, health):
+        print("DIAG", end="", flush=True)
+        health("degraded", 1.4)
+        ready()
+        return 0
+
+    monkeypatch.setattr(runner, "run_bridge", fake_run)
+    assert (
+        desktop_process.internal_command(
+            ["_desktop-worker", "--device", "test-microphone"]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert captured.err == "DIAG"
+    events = [json.loads(line) for line in captured.out.splitlines()]
+    assert sorted(events, key=lambda event: event["event"]) == [
+        {"event": "inference_health", "state": "degraded", "rtf": 1.4},
+        {"event": "ready"},
+    ]

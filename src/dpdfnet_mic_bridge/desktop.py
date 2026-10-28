@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QStyle,
+    QSystemTrayIcon,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -37,8 +39,18 @@ class BridgeWindow(QMainWindow):
         self.mode = ""
         self.forced = False
         self.worker_failed = False
+        self.inference_degraded = False
+        self._notification_processes = set()
         self.vbcable_setup_launched = False
         self.status = QLabel("Looking for microphones…")
+        self.tray = None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray = QSystemTrayIcon(
+                self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon),
+                self,
+            )
+            self.tray.setToolTip("DPDFNet Mic Bridge")
+            self.tray.show()
         self.microphones = QComboBox()
         self.refresh = QPushButton("Refresh")
         self.refresh.clicked.connect(self.discover)
@@ -96,12 +108,13 @@ class BridgeWindow(QMainWindow):
         self.mode = mode
         self.buffer = ""
         self.process = QProcess(self)
-        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
         env.insert("PYTHONIOENCODING", "utf-8")
         self.process.setProcessEnvironment(env)
         self.process.readyReadStandardOutput.connect(self.read_output)
+        self.process.readyReadStandardError.connect(self.read_error)
         self.process.finished.connect(self.finished)
         self.process.errorOccurred.connect(self.process_error)
         executable, arguments = child_command(arguments)
@@ -122,6 +135,7 @@ class BridgeWindow(QMainWindow):
         self.endpoint = None
         self.stopping = self.forced = False
         self.worker_failed = False
+        self.inference_degraded = False
         self.status.setText("Loading model and starting audio…")
         self.spawn(
             "worker",
@@ -236,9 +250,93 @@ class BridgeWindow(QMainWindow):
                     else "Choose an available microphone and complete audio setup, then Refresh."
                 )
             elif message.get("event") == "ready" and not self.stopping:
-                self.status.setText("Streaming enhanced microphone audio.")
+                if not self.inference_degraded:
+                    self.status.setText("Streaming enhanced microphone audio.")
             elif message.get("event") == "endpoints":
                 self.endpoint = message
+            elif (
+                message.get("event") == "inference_health"
+                and self.mode == "worker"
+                and not self.stopping
+            ):
+                if message.get("state") == "degraded":
+                    if self.inference_degraded:
+                        continue
+                    self.inference_degraded = True
+                    self.status.setText(
+                        "Inference is missing audio deadlines; your microphone may stutter."
+                    )
+                    self.notify_overload()
+                elif message.get("state") == "healthy":
+                    self.inference_degraded = False
+                    self.status.setText("Streaming enhanced microphone audio.")
+
+    def read_error(self):
+        diagnostics = bytes(self.process.readAllStandardError()).decode(
+            "utf-8", errors="replace"
+        )
+        if diagnostics:
+            self.log.appendPlainText(diagnostics.rstrip("\n"))
+
+    def notify_overload(self):
+        title = "DPDFNet Mic Bridge"
+        detail = "Inference is missing audio deadlines; your microphone may stutter."
+        if platform.system() == "Linux":
+            # Observe the exit status asynchronously. Successful process launch
+            # does not mean the desktop notification server accepted the request.
+            notifier = QProcess(self)
+            notifier.setProgram("notify-send")
+            notifier.setArguments(["--app-name=DPDFNet Mic Bridge", title, detail])
+            env = QProcessEnvironment.systemEnvironment()
+            if getattr(sys, "frozen", False):
+                original = env.value("LD_LIBRARY_PATH_ORIG")
+                if original:
+                    env.insert("LD_LIBRARY_PATH", original)
+                else:
+                    env.remove("LD_LIBRARY_PATH")
+            notifier.setProcessEnvironment(env)
+            self._notification_processes.add(notifier)
+            notifier.finished.connect(
+                lambda code, status, process=notifier: self._notification_finished(
+                    process, code, status
+                )
+            )
+            notifier.errorOccurred.connect(
+                lambda error, process=notifier: self._complete_notification(
+                    process, False
+                )
+            )
+            notifier.start()
+            QTimer.singleShot(
+                3000, lambda process=notifier: self._notification_timeout(process)
+            )
+            return
+        self._notification_fallback(title, detail)
+
+    def _notification_fallback(self, title, detail):
+        if self.tray is not None:
+            self.tray.showMessage(title, detail, QSystemTrayIcon.MessageIcon.Warning)
+
+    def _notification_finished(self, process, code, status):
+        self._complete_notification(
+            process, code == 0 and status == QProcess.ExitStatus.NormalExit
+        )
+
+    def _notification_timeout(self, process):
+        if process in self._notification_processes:
+            process.kill()
+            self._complete_notification(process, False)
+
+    def _complete_notification(self, process, succeeded):
+        if process not in self._notification_processes:
+            return
+        self._notification_processes.remove(process)
+        if not succeeded:
+            self._notification_fallback(
+                "DPDFNet Mic Bridge",
+                "Inference is missing audio deadlines; your microphone may stutter.",
+            )
+        process.deleteLater()
 
     def process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
@@ -248,6 +346,7 @@ class BridgeWindow(QMainWindow):
     def finished(self, code, exit_status):
         self.deadline.stop()
         self.read_output()
+        self.read_error()
         if self.buffer.strip():
             self.log.appendPlainText(self.buffer.strip())
         previous_mode = self.mode
@@ -300,6 +399,13 @@ class BridgeWindow(QMainWindow):
                 self.process.kill()
             event.ignore()
         else:
+            # QTimer callbacks must never dereference a notifier destroyed
+            # alongside the closing window.
+            for notifier in tuple(self._notification_processes):
+                self._notification_processes.remove(notifier)
+                if notifier.state() != QProcess.ProcessState.NotRunning:
+                    notifier.kill()
+                notifier.deleteLater()
             event.accept()
 
 

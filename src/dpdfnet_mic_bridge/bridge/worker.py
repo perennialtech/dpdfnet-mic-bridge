@@ -6,7 +6,7 @@ import collections
 import math
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -16,6 +16,7 @@ from ..realtime_env.threading import (
     configure_realtime_worker_thread,
 )
 from ..realtime_env.types import RuntimeTuningRequest, ThreadTuningResult
+from .health import HealthWatchdog, InferenceHealth
 
 
 class EnhancementWorker:
@@ -33,6 +34,7 @@ class EnhancementWorker:
         block_size: int,
         realtime_request: RuntimeTuningRequest | None = None,
         read_timeout_ms: int = 100,
+        on_health: Callable[[str, float], None] | None = None,
     ) -> None:
         self._engine = engine
         self._enhancer = enhancer
@@ -41,6 +43,9 @@ class EnhancementWorker:
         self._read_timeout_ms = read_timeout_ms
         self._block_seconds = float(block_size) / float(sample_rate)
         self._realtime_request = realtime_request or RuntimeTuningRequest(mode="off")
+        self._health = InferenceHealth() if on_health is not None else None
+        self._on_health = on_health
+        self._watchdog = HealthWatchdog(self._health, on_health)
 
         self._input_buffer = np.empty(block_size, dtype=np.float32)
         self._silence_buffer = np.zeros(block_size, dtype=np.float32)
@@ -82,6 +87,7 @@ class EnhancementWorker:
         if self._thread is not None:
             raise RuntimeError("EnhancementWorker.start() called more than once.")
 
+        self._watchdog.start()
         self._thread = threading.Thread(
             target=self._run,
             name="dpdfnet-enhancer",
@@ -92,10 +98,28 @@ class EnhancementWorker:
     def stop(self, *, timeout: float = 2.0) -> bool:
         self._stop.set()
         thread = self._thread
-        if thread is not None:
-            thread.join(timeout=timeout)
-            return not thread.is_alive()
-        return True
+        try:
+            if thread is not None:
+                thread.join(timeout=timeout)
+                return not thread.is_alive()
+            return True
+        finally:
+            self._watchdog.stop()
+
+    def observe_output_faults(self, stats: dict) -> None:
+        if self._health is None or self._on_health is None:
+            return
+        total = sum(
+            int(stats.get(key, 0) or 0)
+            for key in (
+                "output_underrun_blocks",
+                "output_ring_dropped_blocks",
+                "output_stale_dropped_blocks",
+            )
+        )
+        transition = self._health.observe_output_faults(total)
+        if transition is not None:
+            self._on_health(*transition)
 
     def warning_lines(self) -> list[str]:
         pairs = (
@@ -191,6 +215,8 @@ class EnhancementWorker:
                 self.input_blocks += 1
                 self.input_frames += int(self._input_buffer.size)
 
+                if self._health is not None:
+                    self._health.begin_inference()
                 start = time.perf_counter()
                 enhanced = self._enhancer.process(
                     self._input_buffer,
@@ -237,6 +263,10 @@ class EnhancementWorker:
         self._rolling_times.append(elapsed)
         if elapsed > self._block_seconds:
             self.deadline_misses += 1
+        if self._health is not None:
+            transition = self._health.finish_inference(elapsed, self._block_seconds)
+            if transition is not None and self._on_health is not None:
+                self._on_health(*transition)
 
     def _copy_and_correct_output(self, output_block: np.ndarray) -> np.ndarray:
         if not output_block.flags.c_contiguous:

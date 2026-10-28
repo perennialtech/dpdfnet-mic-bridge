@@ -70,6 +70,18 @@ PulseAudio client utilities; installing `pactl` separately is not required.
 
 ## Troubleshooting
 
+The desktop window warns after repeated inference deadline misses (at least 25%
+over a five-second audio window), sustained throughput below real time, or a
+single inference call stalled for five seconds. On native audio routes, it also
+warns when output underruns or drops continue for five seconds. It sends one
+notification per
+degradation episode, then waits for sustained recovery before alerting again.
+An isolated completed cold-start spike does not count as repeated misses; an
+in-progress five-second stall is reported because audio output has stopped.
+On Linux, system notifications use `notify-send` where available, falling back
+to the tray when the command fails. The window status remains visible even if
+no system notification service is available.
+
 Open **Show/hide diagnostics** to see startup and streaming errors. If a
 microphone is disconnected or renamed, stop and click **Refresh**. On Windows,
 confirm both VB-CABLE endpoints appear in Windows sound settings. On Linux,

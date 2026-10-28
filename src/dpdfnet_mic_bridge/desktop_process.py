@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stdout
 import json
 from pathlib import Path
 import platform
+import queue
 import signal
 import sys
 import threading
@@ -136,21 +138,51 @@ def internal_command(argv: list[str]) -> int:
     threading.Thread(target=read_control, name="desktop-control", daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
+    # Reserve stdout for JSON events. Worker progress and diagnostics go to
+    # stderr, which the desktop reads separately.
+    event_stream = sys.stdout
+    event_output_lock = threading.Lock()
+
+    def emit_event(message: dict):
+        with event_output_lock:
+            event_stream.write(json.dumps(message) + "\n")
+            event_stream.flush()
+
     def ready():
-        print(json.dumps({"event": "ready"}), flush=True)
+        emit_event({"event": "ready"})
 
     def endpoints(endpoint):
-        print(
-            json.dumps(
-                {
-                    "event": "endpoints",
-                    "sink": endpoint.render_name,
-                    "modules": endpoint.module_ids,
-                }
-            ),
-            flush=True,
+        emit_event(
+            {
+                "event": "endpoints",
+                "sink": endpoint.render_name,
+                "modules": endpoint.module_ids,
+            }
         )
+
+    # Audio workers only enqueue transitions; a separate thread writes IPC so
+    # notifications cannot block microphone capture or inference.
+    health_events: queue.SimpleQueue[tuple[str, float] | None] = queue.SimpleQueue()
+
+    def forward_health():
+        while (transition := health_events.get()) is not None:
+            state, rtf = transition
+            emit_event({"event": "inference_health", "state": state, "rtf": rtf})
+
+    sender = threading.Thread(target=forward_health, name="desktop-health", daemon=True)
+    sender.start()
 
     from .bridge.runner import run_bridge
 
-    return run_bridge(args, stop, ready, endpoints)
+    try:
+        with redirect_stdout(sys.stderr):
+            return run_bridge(
+                args,
+                stop,
+                ready,
+                endpoints,
+                lambda state, rtf: health_events.put((state, rtf)),
+            )
+    finally:
+        health_events.put(None)
+        sender.join(timeout=1)
