@@ -118,6 +118,30 @@ pub fn query_audio_inventory(py: Python<'_>) -> PyResult<Py<PyDict>> {
         item.set_item("default_high_input_latency", info.default_high_input_latency)?;
         item.set_item("default_low_output_latency", info.default_low_output_latency)?;
         item.set_item("default_high_output_latency", info.default_high_output_latency)?;
+        #[cfg(windows)]
+        {
+            // Windows endpoint pin labels can be freely renamed. Expose
+            // driver-owned metadata so Python needn't infer cable identity
+            // from user-editable display names alone.
+            if hostapi_names
+                .get_item(info.host_api as usize)?
+                .extract::<String>()?
+                .to_ascii_lowercase()
+                .contains("wasapi")
+            {
+                if let Some(metadata) = crate::windows_wasapi::device_metadata(device_id) {
+                    if let Some(value) = metadata.container {
+                        item.set_item("container_id", value)?;
+                    }
+                    if let Some(value) = metadata.description {
+                        item.set_item("device_description", value)?;
+                    }
+                    if let Some(value) = metadata.manufacturer {
+                        item.set_item("manufacturer", value)?;
+                    }
+                }
+            }
+        }
 
         devices.append(item)?;
     }

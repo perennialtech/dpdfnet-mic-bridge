@@ -37,6 +37,8 @@ def desktop_inventory() -> dict:
         raise RuntimeError("The desktop application supports Windows and Linux.")
     from .audio.inventory import hostapi_name_for_device, query_audio_inventory
     from .audio.hostapi import hostapi_filter_key_for_name
+    from .audio.tags import infer_device_tags, vb_cable_family
+    from .audio.route_validation import windows_vbcable_capture_name
 
     inventory = query_audio_inventory()
     devices = [
@@ -47,18 +49,21 @@ def desktop_inventory() -> dict:
         )
         == "wasapi"
     ]
-    render = any(
-        "cable input" in item["name"].casefold() and item["max_output_channels"] > 0
-        for item in devices
-    )
-    capture = any(
-        "cable output" in item["name"].casefold() and item["max_input_channels"] > 0
+    driver_ready = any(
+        "vb-cable-playback" in infer_device_tags(item)
+        and windows_vbcable_capture_name(
+            inventory=inventory,
+            output_hostapi=hostapi_name_for_device(item, inventory.hostapi_names),
+            output_device_id=int(item["id"]),
+        )
+        is not None
         for item in devices
     )
     inputs = [
         item
         for item in devices
         if item["max_input_channels"] > 0
+        and vb_cable_family(item, "output") is None
         and not any(
             word in item["name"].casefold() for word in ("cable", "loopback", "monitor")
         )
@@ -67,7 +72,7 @@ def desktop_inventory() -> dict:
         "microphones": [
             {"key": item["stable_id"], "name": item["name"]} for item in inputs
         ],
-        "driver_ready": render and capture,
+        "driver_ready": driver_ready,
     }
 
 
@@ -128,6 +133,7 @@ def internal_command(argv: list[str]) -> int:
     else:
         from .audio.inventory import query_audio_inventory
 
+        print("Resolving selected Windows microphone...", file=sys.stderr, flush=True)
         matches = [
             item
             for item in query_audio_inventory().devices
@@ -161,8 +167,11 @@ def internal_command(argv: list[str]) -> int:
             event_stream.write(json.dumps(message) + "\n")
             event_stream.flush()
 
-    def ready():
-        emit_event({"event": "ready"})
+    def ready(microphone_name=None):
+        message = {"event": "ready"}
+        if microphone_name is not None:
+            message["microphone"] = microphone_name
+        emit_event(message)
 
     def endpoints(endpoint):
         emit_event(

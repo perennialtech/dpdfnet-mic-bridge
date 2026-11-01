@@ -76,7 +76,9 @@ def print_run_summary(
         print(f"  rt     {'; '.join(status_parts)}")
 
     if system == "Windows":
-        print("  app    select VB-CABLE 'CABLE Output'")
+        print(
+            f"  app    select '{config.app_microphone_name or 'CABLE Output'}' as the microphone"
+        )
 
     elif system == "Linux":
         if config.app_microphone_name is not None:

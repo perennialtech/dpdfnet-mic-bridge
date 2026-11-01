@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from html import escape
 import platform
 import sys
 
@@ -62,8 +63,10 @@ class BridgeWindow(QMainWindow):
         self.stop.setEnabled(False)
         self.stop.clicked.connect(self.stop_bridge)
         name = "CABLE Output" if platform.system() == "Windows" else "DPDFNet_Mic"
-        guidance = QLabel(f"In Discord or another calling app, select: <b>{name}</b>")
-        guidance.setWordWrap(True)
+        self.guidance = QLabel(
+            f"In Discord or another calling app, select: <b>{name}</b>"
+        )
+        self.guidance.setWordWrap(True)
         self.driver = QLabel(
             'VB-CABLE is missing. <a href="https://vb-audio.com/Cable/">Get it from VB-Audio</a>, install its driver, then Refresh. The driver may need administrator approval and a restart.'
         )
@@ -94,7 +97,7 @@ class BridgeWindow(QMainWindow):
         buttons.addWidget(self.stop)
         layout.addLayout(buttons)
         layout.addWidget(self.status)
-        layout.addWidget(guidance)
+        layout.addWidget(self.guidance)
         layout.addWidget(diagnostics)
         layout.addWidget(self.log)
         widget = QWidget()
@@ -103,6 +106,9 @@ class BridgeWindow(QMainWindow):
         self.deadline = QTimer(self)
         self.deadline.setSingleShot(True)
         self.deadline.timeout.connect(self.force_stop)
+        self.startup_deadline = QTimer(self)
+        self.startup_deadline.setSingleShot(True)
+        self.startup_deadline.timeout.connect(self.startup_timed_out)
         self.vbcable_setup_timer = QTimer(self)
         self.vbcable_setup_timer.timeout.connect(self.check_vbcable_setup)
         QTimer.singleShot(0, self.discover)
@@ -140,7 +146,13 @@ class BridgeWindow(QMainWindow):
         self.worker_failed = False
         self.inference_degraded = False
         self._health_sequence = 0
+        if platform.system() == "Windows":
+            self.guidance.setText(
+                "In Discord or another calling app, select: <b>CABLE Output</b>"
+            )
         self.status.setText("Loading model and starting audio…")
+        if platform.system() == "Windows":
+            self.startup_deadline.start(90000)
         self.spawn(
             "worker",
             ["_desktop-worker", "--device", str(self.microphones.currentData())],
@@ -235,6 +247,18 @@ class BridgeWindow(QMainWindow):
             )
             self.process.kill()
 
+    def startup_timed_out(self):
+        if self.process is None or self.mode != "worker" or self.stopping:
+            return
+        self.forced = True
+        self.log.appendPlainText(
+            "Windows audio startup did not finish within 90 seconds. "
+            "The child process is being stopped; see the preceding diagnostics "
+            "for the last completed startup stage."
+        )
+        self.log.show()
+        self.process.kill()
+
     def read_output(self):
         self.buffer += bytes(self.process.readAllStandardOutput()).decode(
             "utf-8", errors="replace"
@@ -286,6 +310,12 @@ class BridgeWindow(QMainWindow):
                     else "Choose an available microphone and complete audio setup, then Refresh."
                 )
             elif message.get("event") == "ready" and not self.stopping:
+                self.startup_deadline.stop()
+                if message.get("microphone"):
+                    microphone = escape(str(message["microphone"]))
+                    self.guidance.setText(
+                        f"In Discord or another calling app, select: <b>{microphone}</b>"
+                    )
                 if not self.inference_degraded:
                     self.status.setText("Streaming enhanced microphone audio.")
             elif message.get("event") == "endpoints":
@@ -394,6 +424,7 @@ class BridgeWindow(QMainWindow):
 
     def finished(self, code, exit_status):
         self.deadline.stop()
+        self.startup_deadline.stop()
         self.read_output()
         self.read_error()
         if self.buffer.strip():

@@ -38,6 +38,36 @@ def test_window_has_no_basic_model_or_output_controls(monkeypatch):
     app.processEvents()
 
 
+def test_windows_startup_times_out_and_shows_diagnostics(monkeypatch):
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr("dpdfnet_mic_bridge.desktop.platform.system", lambda: "Windows")
+    app = QApplication.instance() or QApplication([])
+    window = BridgeWindow()
+    monkeypatch.setattr(
+        window, "spawn", lambda mode, args: setattr(window, "mode", mode)
+    )
+    window.start_bridge()
+    assert window.startup_deadline.isActive()
+
+    class Process:
+        killed = False
+
+        def kill(self):
+            self.killed = True
+
+    process = Process()
+    window.process = process
+    window.startup_timed_out()
+    assert process.killed
+    assert window.forced
+    assert "90 seconds" in window.log.toPlainText()
+    assert not window.log.isHidden()
+    window.startup_deadline.stop()
+    window.process = None
+    window.close()
+    app.processEvents()
+
+
 def test_health_events_update_status_and_notify_once(monkeypatch):
     import json
 
@@ -344,3 +374,25 @@ def test_closing_window_waits_for_running_notification(monkeypatch, tmp_path, ca
     assert not window._notification_processes
     app.processEvents()
     assert "Destroyed while process" not in capfd.readouterr().err
+
+
+def test_ready_event_displays_actual_windows_capture_name(monkeypatch):
+    import json
+
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    app = QApplication.instance() or QApplication([])
+    window = BridgeWindow()
+    window.mode = "worker"
+    name = "CABLE-A Output (Voice <Chat>)"
+
+    class Process:
+        def readAllStandardOutput(self):
+            return (json.dumps({"event": "ready", "microphone": name}) + "\n").encode()
+
+    window.process = Process()
+    window.read_output()
+    assert "CABLE-A Output (Voice &lt;Chat&gt;)" in window.guidance.text()
+    assert window.status.text() == "Streaming enhanced microphone audio."
+    window.process = None
+    window.close()
+    app.processEvents()

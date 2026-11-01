@@ -164,3 +164,157 @@ def test_desktop_worker_diagnostics_cannot_corrupt_health_events(monkeypatch, ca
         {"event": "inference_health", "state": "degraded", "rtf": 1.4, "sequence": 1},
         {"event": "ready"},
     ]
+
+
+def test_desktop_worker_ready_event_includes_selected_capture_name(monkeypatch, capsys):
+    import io
+    import json
+    from dpdfnet_mic_bridge import desktop_process
+    from dpdfnet_mic_bridge.bridge import runner
+
+    monkeypatch.setattr(desktop_process.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    def fake_run(args, stop, ready, endpoints, health):
+        ready("CABLE-A Output (Voice Chat)")
+        return 0
+
+    monkeypatch.setattr(runner, "run_bridge", fake_run)
+    assert (
+        desktop_process.internal_command(
+            ["_desktop-worker", "--device", "test-microphone"]
+        )
+        == 0
+    )
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events == [{"event": "ready", "microphone": "CABLE-A Output (Voice Chat)"}]
+
+
+def test_windows_desktop_discovers_actual_cable_a_endpoints(monkeypatch):
+    from dpdfnet_mic_bridge import desktop_process
+    from dpdfnet_mic_bridge.audio import inventory as inventory_module
+    from dpdfnet_mic_bridge.audio.types import AudioInventory
+
+    monkeypatch.setattr(desktop_process.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        inventory_module,
+        "query_audio_inventory",
+        lambda: AudioInventory(
+            hostapi_names=["Windows WASAPI"],
+            devices=[
+                {
+                    "id": 0,
+                    "name": "Microphone (USB)",
+                    "stable_id": "mic-0",
+                    "hostapi": 0,
+                    "max_input_channels": 1,
+                    "max_output_channels": 0,
+                },
+                {
+                    "id": 1,
+                    "name": "CABLE-A Input (VB-Audio Cable A)",
+                    "hostapi": 0,
+                    "max_input_channels": 0,
+                    "max_output_channels": 2,
+                },
+                {
+                    "id": 2,
+                    "name": "CABLE-A Output (VB-Audio Cable A)",
+                    "hostapi": 0,
+                    "max_input_channels": 2,
+                    "max_output_channels": 0,
+                },
+            ],
+        ),
+    )
+    assert desktop_process.desktop_inventory() == {
+        "microphones": [{"key": "mic-0", "name": "Microphone (USB)"}],
+        "driver_ready": True,
+    }
+
+
+def test_windows_desktop_not_ready_for_unpaired_cable_families(monkeypatch):
+    from dpdfnet_mic_bridge import desktop_process
+    from dpdfnet_mic_bridge.audio import inventory as inventory_module
+    from dpdfnet_mic_bridge.audio.types import AudioInventory
+
+    monkeypatch.setattr(desktop_process.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        inventory_module,
+        "query_audio_inventory",
+        lambda: AudioInventory(
+            hostapi_names=["Windows WASAPI"],
+            devices=[
+                {
+                    "id": 0,
+                    "name": "Microphone (USB)",
+                    "stable_id": "mic-0",
+                    "hostapi": 0,
+                    "max_input_channels": 1,
+                    "max_output_channels": 0,
+                },
+                {
+                    "id": 1,
+                    "name": "CABLE-A Input (VB-Audio Cable A)",
+                    "hostapi": 0,
+                    "max_input_channels": 0,
+                    "max_output_channels": 2,
+                },
+                {
+                    "id": 2,
+                    "name": "CABLE-B Output (VB-Audio Cable B)",
+                    "hostapi": 0,
+                    "max_input_channels": 2,
+                    "max_output_channels": 0,
+                },
+            ],
+        ),
+    )
+    assert desktop_process.desktop_inventory()["driver_ready"] is False
+
+
+def test_windows_desktop_recognizes_fully_renamed_cable_from_driver(monkeypatch):
+    from dpdfnet_mic_bridge import desktop_process
+    from dpdfnet_mic_bridge.audio import inventory as inventory_module
+    from dpdfnet_mic_bridge.audio.types import AudioInventory
+
+    monkeypatch.setattr(desktop_process.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        inventory_module,
+        "query_audio_inventory",
+        lambda: AudioInventory(
+            hostapi_names=["Windows WASAPI"],
+            devices=[
+                {
+                    "id": 0,
+                    "name": "Microphone (USB)",
+                    "stable_id": "mic-0",
+                    "hostapi": 0,
+                    "max_input_channels": 1,
+                    "max_output_channels": 0,
+                },
+                {
+                    "id": 1,
+                    "name": "Studio Playback",
+                    "hostapi": 0,
+                    "max_input_channels": 0,
+                    "max_output_channels": 2,
+                    "device_description": "VB-Audio Virtual Cable",
+                    "container_id": "same",
+                },
+                {
+                    "id": 2,
+                    "name": "Conference Capture",
+                    "hostapi": 0,
+                    "max_input_channels": 2,
+                    "max_output_channels": 0,
+                    "device_description": "VB-Audio Virtual Cable",
+                    "container_id": "same",
+                },
+            ],
+        ),
+    )
+    assert desktop_process.desktop_inventory() == {
+        "microphones": [{"key": "mic-0", "name": "Microphone (USB)"}],
+        "driver_ready": True,
+    }

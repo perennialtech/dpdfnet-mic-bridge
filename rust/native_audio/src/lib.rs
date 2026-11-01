@@ -6,6 +6,8 @@ mod portaudio_ffi;
 mod ring;
 mod runtime;
 mod stats;
+#[cfg(windows)]
+mod windows_wasapi;
 
 use pyo3::prelude::*;
 

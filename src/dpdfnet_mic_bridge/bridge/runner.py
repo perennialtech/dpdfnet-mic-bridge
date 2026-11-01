@@ -130,6 +130,7 @@ def run_bridge(
 
     realtime_request = RuntimeTuningRequest(mode=args.realtime)
 
+    print("Checking available audio devices...", flush=True)
     initial_inventory = query_audio_inventory()
     input_stable_id: str | None = None
     output_stable_id: str | None = None
@@ -181,6 +182,7 @@ def run_bridge(
             args.input = find_shifted_id(input_stable_id, args.input)
             args.output = find_shifted_id(output_stable_id, args.output)
 
+        print("Checking microphone and virtual cable route...", flush=True)
         config = build_run_config(
             args,
             realtime_manager=realtime,
@@ -275,7 +277,7 @@ def run_bridge(
 
             print("Streaming." if on_ready else "Streaming. Ctrl+C stops.")
             if on_ready:
-                on_ready()
+                on_ready(config.app_microphone_name)
             print()
 
             next_metrics_print = 0.0
