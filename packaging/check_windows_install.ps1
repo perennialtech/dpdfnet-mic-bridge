@@ -24,6 +24,8 @@ foreach ($iteration in 1..2) {
     if ($LASTEXITCODE -ne 0) { throw "Installed CLI startup failed" }
     & "$directory\dpdfnet-mic-bridge-cli.exe" _desktop-ui-test
     if ($LASTEXITCODE -ne 0) { throw "Installed desktop smoke test failed" }
+    uv run --no-sync python packaging/check_model_smoke.py "$directory\dpdfnet-mic-bridge-cli.exe"
+    if ($LASTEXITCODE -ne 0) { throw "Installed model inference failed" }
 }
 $process = Start-Process -FilePath "$directory\unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw "Uninstall failed: $($process.ExitCode)" }
