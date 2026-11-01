@@ -67,3 +67,17 @@ def test_desktop_model_smoke_invokes_inference(monkeypatch, capsys):
     assert desktop_process.internal_command(["_desktop-model-test"]) == 0
     assert seen == [((4800,), np.dtype("float32"), 48000)]
     assert "Bundled model inference passed." in capsys.readouterr().out
+
+
+def test_desktop_model_smoke_rejects_invalid_output(monkeypatch):
+    import numpy as np
+
+    from dpdfnet_mic_bridge import desktop_process
+
+    class Enhancer:
+        def process(self, samples, sample_rate):
+            return np.array([float("nan")], dtype=np.float32)
+
+    monkeypatch.setattr(loading, "load_enhancer", lambda: Enhancer())
+    with pytest.raises(RuntimeError, match="no finite audio samples"):
+        desktop_process.internal_command(["_desktop-model-test"])
