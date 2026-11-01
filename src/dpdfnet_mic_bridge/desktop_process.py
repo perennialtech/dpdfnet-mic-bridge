@@ -128,6 +128,7 @@ def internal_command(argv: list[str]) -> int:
     else:
         from .audio.inventory import query_audio_inventory
 
+        print("Resolving selected Windows microphone...", file=sys.stderr, flush=True)
         matches = [
             item
             for item in query_audio_inventory().devices
