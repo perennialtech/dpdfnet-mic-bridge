@@ -217,3 +217,84 @@ def test_ambiguous_renamed_cable_capture_is_rejected(monkeypatch):
     _setup(monkeypatch, inventory)
     with pytest.raises(RuntimeError, match="ambiguous"):
         config.build_run_config(_args(), app_microphone_name=None)
+
+
+def test_fully_renamed_windows_cable_uses_driver_metadata(monkeypatch):
+    existing = _inventory()
+    inventory = AudioInventory(
+        devices=[
+            (
+                {
+                    **item,
+                    "name": (
+                        "Studio Playback" if item["id"] == 3 else "Conference Capture"
+                    ),
+                    "manufacturer": "VB-Audio Software",
+                    "device_description": "VB-Audio Virtual Cable",
+                    "container_id": "virtual-cable-1",
+                }
+                if item["id"] in (3, 7)
+                else item
+            )
+            for item in existing.devices
+            if item["id"] not in (5, 6)
+        ],
+        hostapi_names=existing.hostapi_names,
+    )
+    _setup(monkeypatch, inventory)
+    monkeypatch.setattr(config, "negotiate_full_duplex_channels", lambda **kw: (1, 2))
+    route = config.build_run_config(_args(), app_microphone_name=None)
+    assert (route.output_device_id, route.app_microphone_name) == (
+        3,
+        "Conference Capture",
+    )
+    from dpdfnet_mic_bridge.audio.tags import infer_device_tags
+
+    assert "vb-cable-playback" in infer_device_tags(inventory.devices[2])
+
+
+def test_duplicate_playback_names_are_rejected_without_identity(monkeypatch):
+    existing = _inventory()
+    inventory = AudioInventory(
+        devices=[item for item in existing.devices if item["id"] not in (5, 6)]
+        + [
+            {
+                "id": 8,
+                "name": "CABLE Input (VB-Audio Virtual Cable)",
+                "hostapi": 0,
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+            }
+        ],
+        hostapi_names=existing.hostapi_names,
+    )
+    _setup(monkeypatch, inventory)
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        config.build_run_config(_args(), app_microphone_name=None)
+
+
+def test_duplicate_playback_names_can_use_distinct_container_identity(monkeypatch):
+    existing = _inventory()
+    inventory = AudioInventory(
+        devices=[
+            {**item, "container_id": "one"} if item["id"] in (3, 7) else item
+            for item in existing.devices
+            if item["id"] not in (5, 6)
+        ]
+        + [
+            {
+                "id": 8,
+                "name": "CABLE Input (VB-Audio Virtual Cable)",
+                "hostapi": 0,
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "container_id": "two",
+            }
+        ],
+        hostapi_names=existing.hostapi_names,
+    )
+    _setup(monkeypatch, inventory)
+    monkeypatch.setattr(config, "negotiate_full_duplex_channels", lambda **kw: (1, 2))
+    route = config.build_run_config(_args(), app_microphone_name=None)
+    assert route.output_device_id == 3
+    assert route.app_microphone_name == "CABLE Output (VB-Audio Virtual Cable)"

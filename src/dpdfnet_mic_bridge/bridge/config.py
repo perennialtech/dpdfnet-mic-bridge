@@ -53,7 +53,7 @@ def build_run_config(
                     if hostapi_name_for_device(item, inventory.hostapi_names)
                     == input_hostapi
                     and int(item["max_output_channels"]) > 0
-                    and "vb-cable-playback" in infer_device_tags(str(item["name"]))
+                    and "vb-cable-playback" in infer_device_tags(item)
                 ),
                 key=lambda item: int(item["id"]),
             )
@@ -134,7 +134,7 @@ def _build_run_config(
     input_name = str(input_info["name"])
     output_name = str(output_info["name"])
     input_tags = infer_device_tags(input_name)
-    output_tags = infer_device_tags(output_name)
+    output_tags = infer_device_tags(output_info)
 
     capture_name = validate_backend_route(
         inventory=inventory,

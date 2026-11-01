@@ -37,7 +37,8 @@ def desktop_inventory() -> dict:
         raise RuntimeError("The desktop application supports Windows and Linux.")
     from .audio.inventory import hostapi_name_for_device, query_audio_inventory
     from .audio.hostapi import hostapi_filter_key_for_name
-    from .audio.tags import infer_device_tags
+    from .audio.tags import infer_device_tags, vb_cable_family
+    from .audio.route_validation import windows_vbcable_capture_name
 
     inventory = query_audio_inventory()
     devices = [
@@ -48,20 +49,21 @@ def desktop_inventory() -> dict:
         )
         == "wasapi"
     ]
-    render = any(
-        "vb-cable-playback" in infer_device_tags(item["name"])
-        and item["max_output_channels"] > 0
-        for item in devices
-    )
-    capture = any(
-        "vb-cable-recording" in infer_device_tags(item["name"])
-        and item["max_input_channels"] > 0
+    driver_ready = any(
+        "vb-cable-playback" in infer_device_tags(item)
+        and windows_vbcable_capture_name(
+            inventory=inventory,
+            output_hostapi=hostapi_name_for_device(item, inventory.hostapi_names),
+            output_device_id=int(item["id"]),
+        )
+        is not None
         for item in devices
     )
     inputs = [
         item
         for item in devices
         if item["max_input_channels"] > 0
+        and vb_cable_family(item, "output") is None
         and not any(
             word in item["name"].casefold() for word in ("cable", "loopback", "monitor")
         )
@@ -70,7 +72,7 @@ def desktop_inventory() -> dict:
         "microphones": [
             {"key": item["stable_id"], "name": item["name"]} for item in inputs
         ],
-        "driver_ready": render and capture,
+        "driver_ready": driver_ready,
     }
 
 

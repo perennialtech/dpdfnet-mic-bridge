@@ -14,35 +14,61 @@ from .tags import has_bridge_output_tags, vb_cable_family
 from .types import AudioInventory
 
 
-def _windows_vbcable_capture_name(
+def windows_vbcable_capture_name(
     *,
     inventory: AudioInventory,
     output_hostapi: str,
-    output_name: str,
+    output_device_id: int,
 ) -> str | None:
-    family = vb_cable_family(output_name, "input")
+    output = next(
+        (
+            item
+            for item in inventory.devices
+            if int(item.get("id", -1)) == output_device_id
+        ),
+        None,
+    )
+    if output is None:
+        return None
+    family = vb_cable_family(output, "input")
     if family is None:
         return None
     renders = [
         item
         for item in inventory.devices
-        if vb_cable_family(str(item.get("name", "")), "input") == family
+        if vb_cable_family(item, "input") == family
         and int(item.get("max_output_channels", 0)) > 0
         and hostapi_name_for_device(item, inventory.hostapi_names) == output_hostapi
     ]
     captures = [
         item
         for item in inventory.devices
-        if vb_cable_family(str(item.get("name", "")), "output") == family
+        if vb_cable_family(item, "output") == family
         and int(item.get("max_input_channels", 0)) > 0
         and hostapi_name_for_device(item, inventory.hostapi_names) == output_hostapi
     ]
-    # Match the suffix when more than one endpoint belongs to this family.
-    expected = output_name.casefold().replace(" input", " output", 1)
-    named = [item for item in captures if str(item["name"]).casefold() == expected]
-    if len(named) == 1:
-        return str(named[0]["name"])
-    # Windows permits renamed pin labels; a unique family pair is unambiguous.
+    # The hardware container GUID groups endpoint pins regardless of renamed
+    # display labels. Use it when both ends expose it, but reject duplicates.
+    container = str(output.get("container_id", "")).casefold()
+    if container and any(item.get("container_id") for item in captures):
+        peers = [
+            item
+            for item in renders
+            if str(item.get("container_id", "")).casefold() == container
+        ]
+        paired = [
+            item
+            for item in captures
+            if str(item.get("container_id", "")).casefold() == container
+        ]
+        if len(peers) == 1 and len(paired) == 1:
+            return str(paired[0]["name"])
+        # Some virtual drivers assign distinct pin containers. If there is
+        # only one cable of this family, the pairing remains unambiguous.
+        if len(renders) != 1 or len(captures) != 1:
+            return None
+    # For legacy inventories with no container identity, only a single
+    # unambiguous render/capture pair is safe; matching names alone are not.
     if len(renders) == 1 and len(captures) == 1:
         return str(captures[0]["name"])
     return None
@@ -78,10 +104,10 @@ def validate_backend_route(
                 f"Output: id={output_device_id}, hostapi={output_hostapi}, name={output_name}"
             )
 
-        capture_name = _windows_vbcable_capture_name(
+        capture_name = windows_vbcable_capture_name(
             inventory=inventory,
             output_hostapi=output_hostapi,
-            output_name=output_name,
+            output_device_id=output_device_id,
         )
         if capture_name is None:
             raise ValueError(
