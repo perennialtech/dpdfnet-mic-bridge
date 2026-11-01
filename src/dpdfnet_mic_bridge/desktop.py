@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from html import escape
 import platform
 import sys
 
@@ -62,8 +63,10 @@ class BridgeWindow(QMainWindow):
         self.stop.setEnabled(False)
         self.stop.clicked.connect(self.stop_bridge)
         name = "CABLE Output" if platform.system() == "Windows" else "DPDFNet_Mic"
-        guidance = QLabel(f"In Discord or another calling app, select: <b>{name}</b>")
-        guidance.setWordWrap(True)
+        self.guidance = QLabel(
+            f"In Discord or another calling app, select: <b>{name}</b>"
+        )
+        self.guidance.setWordWrap(True)
         self.driver = QLabel(
             'VB-CABLE is missing. <a href="https://vb-audio.com/Cable/">Get it from VB-Audio</a>, install its driver, then Refresh. The driver may need administrator approval and a restart.'
         )
@@ -94,7 +97,7 @@ class BridgeWindow(QMainWindow):
         buttons.addWidget(self.stop)
         layout.addLayout(buttons)
         layout.addWidget(self.status)
-        layout.addWidget(guidance)
+        layout.addWidget(self.guidance)
         layout.addWidget(diagnostics)
         layout.addWidget(self.log)
         widget = QWidget()
@@ -143,6 +146,10 @@ class BridgeWindow(QMainWindow):
         self.worker_failed = False
         self.inference_degraded = False
         self._health_sequence = 0
+        if platform.system() == "Windows":
+            self.guidance.setText(
+                "In Discord or another calling app, select: <b>CABLE Output</b>"
+            )
         self.status.setText("Loading model and starting audio…")
         if platform.system() == "Windows":
             self.startup_deadline.start(90000)
@@ -304,6 +311,11 @@ class BridgeWindow(QMainWindow):
                 )
             elif message.get("event") == "ready" and not self.stopping:
                 self.startup_deadline.stop()
+                if message.get("microphone"):
+                    microphone = escape(str(message["microphone"]))
+                    self.guidance.setText(
+                        f"In Discord or another calling app, select: <b>{microphone}</b>"
+                    )
                 if not self.inference_degraded:
                     self.status.setText("Streaming enhanced microphone audio.")
             elif message.get("event") == "endpoints":

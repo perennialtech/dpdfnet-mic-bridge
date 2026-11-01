@@ -277,7 +277,7 @@ def run_bridge(
 
             print("Streaming." if on_ready else "Streaming. Ctrl+C stops.")
             if on_ready:
-                on_ready()
+                on_ready(config.app_microphone_name)
             print()
 
             next_metrics_print = 0.0

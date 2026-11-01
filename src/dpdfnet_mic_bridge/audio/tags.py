@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+import re
+
+_CABLE_ENDPOINT = re.compile(r"\bcable(?:-([a-d]))?\s+(input|output)\b", re.I)
+
+
+def vb_cable_family(name: str, direction: str) -> str | None:
+    match = _CABLE_ENDPOINT.search(name)
+    if match is None or match.group(2).casefold() != direction:
+        return None
+    return (match.group(1) or "").casefold()
+
 
 def infer_device_tags(name: str) -> tuple[str, ...]:
     text = name.casefold()
@@ -11,16 +22,15 @@ def infer_device_tags(name: str) -> tuple[str, ...]:
         if condition:
             tags.extend(new_tags)
 
+    cable_playback = vb_cable_family(name, "input") is not None
+    cable_recording = vb_cable_family(name, "output") is not None
     is_vb_audio = (
-        "vb-audio" in text
-        or "vb-cable" in text
-        or "cable input" in text
-        or "cable output" in text
+        "vb-audio" in text or "vb-cable" in text or cable_playback or cable_recording
     )
 
     add(is_vb_audio, "virtual")
-    add("cable input" in text, "vb-cable-playback")
-    add("cable output" in text, "vb-cable-recording")
+    add(cable_playback, "vb-cable-playback")
+    add(cable_recording, "vb-cable-recording")
     add("monitor of" in text or ".monitor" in text, "virtual", "monitor")
     add("null sink" in text or "virtual sink" in text, "virtual", "virtual-sink")
     add("virtual source" in text, "virtual", "virtual-source")

@@ -10,42 +10,42 @@ import platform
 
 from .hostapi import hostapi_filter_key_for_name
 from .inventory import hostapi_name_for_device
-from .tags import has_bridge_output_tags
+from .tags import has_bridge_output_tags, vb_cable_family
 from .types import AudioInventory
 
 
-def windows_cable_capture_name(render_name: str) -> str:
-    marker = "cable input"
-    position = render_name.casefold().find(marker)
-    if position < 0:
-        raise ValueError(f"Not a VB-CABLE render endpoint: {render_name}")
-    return (
-        render_name[:position] + "CABLE Output" + render_name[position + len(marker) :]
-    )
-
-
-def _windows_vbcable_capture_exists(
+def _windows_vbcable_capture_name(
     *,
     inventory: AudioInventory,
     output_hostapi: str,
     output_name: str,
-) -> bool:
-    # VB-CABLE's paired WASAPI endpoints share their device-name suffix.
-    # An unrelated CABLE Output must not validate a different render cable.
-    expected = windows_cable_capture_name(output_name).casefold()
-    for item in inventory.devices:
-        name = str(item.get("name", "")).casefold()
-        if name != expected:
-            continue
-        if int(item.get("max_input_channels", 0)) < 1:
-            continue
-        if (
-            hostapi_name_for_device(dict(item), inventory.hostapi_names)
-            != output_hostapi
-        ):
-            continue
-        return True
-    return False
+) -> str | None:
+    family = vb_cable_family(output_name, "input")
+    if family is None:
+        return None
+    renders = [
+        item
+        for item in inventory.devices
+        if vb_cable_family(str(item.get("name", "")), "input") == family
+        and int(item.get("max_output_channels", 0)) > 0
+        and hostapi_name_for_device(item, inventory.hostapi_names) == output_hostapi
+    ]
+    captures = [
+        item
+        for item in inventory.devices
+        if vb_cable_family(str(item.get("name", "")), "output") == family
+        and int(item.get("max_input_channels", 0)) > 0
+        and hostapi_name_for_device(item, inventory.hostapi_names) == output_hostapi
+    ]
+    # Match the suffix when more than one endpoint belongs to this family.
+    expected = output_name.casefold().replace(" input", " output", 1)
+    named = [item for item in captures if str(item["name"]).casefold() == expected]
+    if len(named) == 1:
+        return str(named[0]["name"])
+    # Windows permits renamed pin labels; a unique family pair is unambiguous.
+    if len(renders) == 1 and len(captures) == 1:
+        return str(captures[0]["name"])
+    return None
 
 
 def validate_backend_route(
@@ -59,9 +59,10 @@ def validate_backend_route(
     output_name: str,
     input_tags: tuple[str, ...],
     output_tags: tuple[str, ...],
-) -> None:
+) -> str | None:
     system = platform.system()
     output_key = hostapi_filter_key_for_name(output_hostapi)
+    capture_name = None
 
     if system == "Windows":
         if output_key != "wasapi":
@@ -77,14 +78,15 @@ def validate_backend_route(
                 f"Output: id={output_device_id}, hostapi={output_hostapi}, name={output_name}"
             )
 
-        if not _windows_vbcable_capture_exists(
+        capture_name = _windows_vbcable_capture_name(
             inventory=inventory,
             output_hostapi=output_hostapi,
             output_name=output_name,
-        ):
+        )
+        if capture_name is None:
             raise ValueError(
                 "VB-CABLE render endpoint was selected, but the app-facing capture endpoint "
-                f"matching '{output_name}' is not visible on the same WASAPI host API."
+                f"matching '{output_name}' is missing or ambiguous on the same WASAPI host API."
             )
 
     elif system == "Linux":
@@ -107,3 +109,4 @@ def validate_backend_route(
             "Selected input is a monitor/source endpoint. Use a physical microphone input.\n"
             f"Input: id={input_device_id}, hostapi={input_hostapi}, name={input_name}"
         )
+    return capture_name

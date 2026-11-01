@@ -26,7 +26,7 @@ def _inventory():
             },
             {
                 "id": 3,
-                "name": "CABLE Input (VB-Audio A)",
+                "name": "CABLE Input (VB-Audio Virtual Cable)",
                 "hostapi": 0,
                 "max_input_channels": 0,
                 "max_output_channels": 2,
@@ -40,21 +40,21 @@ def _inventory():
             },
             {
                 "id": 5,
-                "name": "CABLE Input (VB-Audio B)",
+                "name": "CABLE-A Input (VB-Audio Cable A)",
                 "hostapi": 0,
                 "max_input_channels": 0,
                 "max_output_channels": 2,
             },
             {
                 "id": 6,
-                "name": "CABLE Output (VB-Audio B)",
+                "name": "CABLE-A Output (VB-Audio Cable A)",
                 "hostapi": 0,
                 "max_input_channels": 2,
                 "max_output_channels": 0,
             },
             {
                 "id": 7,
-                "name": "CABLE Output (VB-Audio A)",
+                "name": "CABLE Output (VB-Audio Virtual Cable)",
                 "hostapi": 0,
                 "max_input_channels": 2,
                 "max_output_channels": 0,
@@ -101,7 +101,7 @@ def test_windows_desktop_tries_only_matching_cables_until_one_opens(monkeypatch)
     assert route.input_device_id == 1
     assert route.output_device_id == 5
     assert route.output_was_auto_selected
-    assert route.app_microphone_name == "CABLE Output (VB-Audio B)"
+    assert route.app_microphone_name == "CABLE-A Output (VB-Audio Cable A)"
 
 
 def test_windows_never_selects_cable_without_its_matching_capture(monkeypatch):
@@ -150,7 +150,7 @@ def test_windows_explicit_output_is_not_reselected(monkeypatch):
     assert attempts == [5]
     assert route.output_device_id == 5
     assert not route.output_was_auto_selected
-    assert route.app_microphone_name == "CABLE Output (VB-Audio B)"
+    assert route.app_microphone_name == "CABLE-A Output (VB-Audio Cable A)"
 
 
 def test_windows_explicit_output_requires_its_own_capture(monkeypatch):
@@ -162,3 +162,58 @@ def test_windows_explicit_output_requires_its_own_capture(monkeypatch):
     _setup(monkeypatch, inventory)
     with pytest.raises(ValueError, match="capture endpoint matching"):
         config.build_run_config(_args(output=5), app_microphone_name=None)
+
+
+@pytest.mark.parametrize("letter", ["A", "B", "C", "D"])
+def test_real_vb_cable_families_are_recognized(letter):
+    from dpdfnet_mic_bridge.audio.tags import infer_device_tags, vb_cable_family
+
+    render = f"CABLE-{letter} Input (VB-Audio Cable {letter})"
+    capture = f"CABLE-{letter} Output (VB-Audio Cable {letter})"
+    assert "vb-cable-playback" in infer_device_tags(render)
+    assert "vb-cable-recording" in infer_device_tags(capture)
+    assert vb_cable_family(render, "input") == letter.casefold()
+    assert vb_cable_family(capture, "output") == letter.casefold()
+
+
+def test_renamed_capture_is_accepted_for_unique_cable_family(monkeypatch):
+    existing = _inventory()
+    inventory = AudioInventory(
+        devices=[
+            {**item, "name": "CABLE Output (Voice Chat)"} if item["id"] == 7 else item
+            for item in existing.devices
+            if item["id"] not in (5, 6)
+        ],
+        hostapi_names=existing.hostapi_names,
+    )
+    _setup(monkeypatch, inventory)
+    monkeypatch.setattr(
+        config, "negotiate_full_duplex_channels", lambda **kwargs: (1, 2)
+    )
+    route = config.build_run_config(_args(), app_microphone_name=None)
+    assert route.output_device_id == 3
+    assert route.app_microphone_name == "CABLE Output (Voice Chat)"
+
+
+def test_ambiguous_renamed_cable_capture_is_rejected(monkeypatch):
+    existing = _inventory()
+    inventory = AudioInventory(
+        devices=[
+            {**item, "name": "CABLE Output (Voice Chat)"} if item["id"] == 7 else item
+            for item in existing.devices
+            if item["id"] not in (5, 6)
+        ]
+        + [
+            {
+                "id": 8,
+                "name": "CABLE Input (VB-Audio Another Cable)",
+                "hostapi": 0,
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+            }
+        ],
+        hostapi_names=existing.hostapi_names,
+    )
+    _setup(monkeypatch, inventory)
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        config.build_run_config(_args(), app_microphone_name=None)

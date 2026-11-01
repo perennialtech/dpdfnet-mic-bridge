@@ -37,6 +37,7 @@ def desktop_inventory() -> dict:
         raise RuntimeError("The desktop application supports Windows and Linux.")
     from .audio.inventory import hostapi_name_for_device, query_audio_inventory
     from .audio.hostapi import hostapi_filter_key_for_name
+    from .audio.tags import infer_device_tags
 
     inventory = query_audio_inventory()
     devices = [
@@ -48,11 +49,13 @@ def desktop_inventory() -> dict:
         == "wasapi"
     ]
     render = any(
-        "cable input" in item["name"].casefold() and item["max_output_channels"] > 0
+        "vb-cable-playback" in infer_device_tags(item["name"])
+        and item["max_output_channels"] > 0
         for item in devices
     )
     capture = any(
-        "cable output" in item["name"].casefold() and item["max_input_channels"] > 0
+        "vb-cable-recording" in infer_device_tags(item["name"])
+        and item["max_input_channels"] > 0
         for item in devices
     )
     inputs = [
@@ -162,8 +165,11 @@ def internal_command(argv: list[str]) -> int:
             event_stream.write(json.dumps(message) + "\n")
             event_stream.flush()
 
-    def ready():
-        emit_event({"event": "ready"})
+    def ready(microphone_name=None):
+        message = {"event": "ready"}
+        if microphone_name is not None:
+            message["microphone"] = microphone_name
+        emit_event(message)
 
     def endpoints(endpoint):
         emit_event(

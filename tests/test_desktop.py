@@ -374,3 +374,25 @@ def test_closing_window_waits_for_running_notification(monkeypatch, tmp_path, ca
     assert not window._notification_processes
     app.processEvents()
     assert "Destroyed while process" not in capfd.readouterr().err
+
+
+def test_ready_event_displays_actual_windows_capture_name(monkeypatch):
+    import json
+
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    app = QApplication.instance() or QApplication([])
+    window = BridgeWindow()
+    window.mode = "worker"
+    name = "CABLE-A Output (Voice <Chat>)"
+
+    class Process:
+        def readAllStandardOutput(self):
+            return (json.dumps({"event": "ready", "microphone": name}) + "\n").encode()
+
+    window.process = Process()
+    window.read_output()
+    assert "CABLE-A Output (Voice &lt;Chat&gt;)" in window.guidance.text()
+    assert window.status.text() == "Streaming enhanced microphone audio."
+    window.process = None
+    window.close()
+    app.processEvents()

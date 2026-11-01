@@ -12,10 +12,7 @@ from ..audio.blocksize import MAX_AUTO_BLOCK_MS, iter_auto_block_sizes
 from ..audio.hostapi import hostapi_filter_key_for_name, same_hostapi_guidance
 from ..audio.inventory import hostapi_name_for_device, query_audio_inventory
 from ..audio.probing import negotiate_full_duplex_channels
-from ..audio.route_validation import (
-    validate_backend_route,
-    windows_cable_capture_name,
-)
+from ..audio.route_validation import validate_backend_route
 from ..audio.tags import infer_device_tags
 from ..models.registry import model_native_sample_rate
 from .device_selection import get_current_run_device_info, resolve_run_device_selection
@@ -139,7 +136,7 @@ def _build_run_config(
     input_tags = infer_device_tags(input_name)
     output_tags = infer_device_tags(output_name)
 
-    validate_backend_route(
+    capture_name = validate_backend_route(
         inventory=inventory,
         input_device_id=input_device_id,
         output_device_id=output_device_id,
@@ -204,9 +201,7 @@ def _build_run_config(
             output_tags=output_tags,
             output_was_auto_selected=output_was_auto_selected,
             app_microphone_name=(
-                windows_cable_capture_name(output_name)
-                if platform.system() == "Windows"
-                else app_microphone_name
+                capture_name if platform.system() == "Windows" else app_microphone_name
             ),
             latency=args.latency,
         )
