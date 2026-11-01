@@ -47,7 +47,14 @@ def _inventory():
             },
             {
                 "id": 6,
-                "name": "CABLE Output (VB-Audio)",
+                "name": "CABLE Output (VB-Audio B)",
+                "hostapi": 0,
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+            },
+            {
+                "id": 7,
+                "name": "CABLE Output (VB-Audio A)",
                 "hostapi": 0,
                 "max_input_channels": 2,
                 "max_output_channels": 0,
@@ -94,6 +101,29 @@ def test_windows_desktop_tries_only_matching_cables_until_one_opens(monkeypatch)
     assert route.input_device_id == 1
     assert route.output_device_id == 5
     assert route.output_was_auto_selected
+    assert route.app_microphone_name == "CABLE Output (VB-Audio B)"
+
+
+def test_windows_never_selects_cable_without_its_matching_capture(monkeypatch):
+    existing = _inventory()
+    inventory = AudioInventory(
+        devices=[item for item in existing.devices if item["id"] != 6],
+        hostapi_names=existing.hostapi_names,
+    )
+    _setup(monkeypatch, inventory)
+    attempted = []
+
+    def negotiate(**kwargs):
+        attempted.append(kwargs["output_device_id"])
+        if kwargs["output_device_id"] == 3:
+            raise RuntimeError("Unavailable output")
+        return (1, 2)
+
+    monkeypatch.setattr(config, "negotiate_full_duplex_channels", negotiate)
+    with pytest.raises(RuntimeError, match="capture endpoint matching"):
+        config.build_run_config(_args(), app_microphone_name=None)
+    # B's render is openable, but must not be used without B's capture.
+    assert attempted == [3]
 
 
 def test_windows_desktop_reports_missing_wasapi_cable(monkeypatch):
@@ -120,3 +150,15 @@ def test_windows_explicit_output_is_not_reselected(monkeypatch):
     assert attempts == [5]
     assert route.output_device_id == 5
     assert not route.output_was_auto_selected
+    assert route.app_microphone_name == "CABLE Output (VB-Audio B)"
+
+
+def test_windows_explicit_output_requires_its_own_capture(monkeypatch):
+    existing = _inventory()
+    inventory = AudioInventory(
+        devices=[item for item in existing.devices if item["id"] != 6],
+        hostapi_names=existing.hostapi_names,
+    )
+    _setup(monkeypatch, inventory)
+    with pytest.raises(ValueError, match="capture endpoint matching"):
+        config.build_run_config(_args(output=5), app_microphone_name=None)

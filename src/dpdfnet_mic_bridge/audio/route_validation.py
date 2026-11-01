@@ -14,14 +14,28 @@ from .tags import has_bridge_output_tags
 from .types import AudioInventory
 
 
+def windows_cable_capture_name(render_name: str) -> str:
+    marker = "cable input"
+    position = render_name.casefold().find(marker)
+    if position < 0:
+        raise ValueError(f"Not a VB-CABLE render endpoint: {render_name}")
+    return (
+        render_name[:position] + "CABLE Output" + render_name[position + len(marker) :]
+    )
+
+
 def _windows_vbcable_capture_exists(
     *,
     inventory: AudioInventory,
     output_hostapi: str,
+    output_name: str,
 ) -> bool:
+    # VB-CABLE's paired WASAPI endpoints share their device-name suffix.
+    # An unrelated CABLE Output must not validate a different render cable.
+    expected = windows_cable_capture_name(output_name).casefold()
     for item in inventory.devices:
         name = str(item.get("name", "")).casefold()
-        if "cable output" not in name:
+        if name != expected:
             continue
         if int(item.get("max_input_channels", 0)) < 1:
             continue
@@ -66,10 +80,11 @@ def validate_backend_route(
         if not _windows_vbcable_capture_exists(
             inventory=inventory,
             output_hostapi=output_hostapi,
+            output_name=output_name,
         ):
             raise ValueError(
                 "VB-CABLE render endpoint was selected, but the app-facing capture endpoint "
-                "'CABLE Output' is not visible on the same WASAPI host API."
+                f"matching '{output_name}' is not visible on the same WASAPI host API."
             )
 
     elif system == "Linux":
