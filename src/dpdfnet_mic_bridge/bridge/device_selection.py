@@ -19,6 +19,7 @@ from ..audio.selection import (
     is_viable_auto_input_candidate,
     suggest_run_pair,
 )
+from ..audio.tags import infer_device_tags
 from ..audio.types import AudioInventory, DeviceProbe, ProbeSnapshot
 
 
@@ -215,6 +216,31 @@ def resolve_run_device_selection(
             role="output",
         )
         return requested_input_id, requested_output_id, False, False, inventory
+
+    if platform.system() == "Windows" and requested_input_id is not None:
+        # The desktop already pinned a WASAPI microphone. Probing every other
+        # audio device can block on unrelated Windows drivers before we start.
+        inventory = query_audio_inventory()
+        input_info = get_current_run_device_info(
+            inventory=inventory, device_id=requested_input_id, role="input"
+        )
+        input_hostapi = hostapi_name_for_device(input_info, inventory.hostapi_names)
+        if hostapi_filter_key_for_name(input_hostapi) == "wasapi":
+            cable_outputs = [
+                item
+                for item in inventory.devices
+                if hostapi_name_for_device(item, inventory.hostapi_names)
+                == input_hostapi
+                and int(item["max_output_channels"]) > 0
+                and "vb-cable-playback" in infer_device_tags(str(item["name"]))
+            ]
+            if not cable_outputs:
+                raise ValueError(
+                    "No VB-CABLE render endpoint is available on the selected microphone's "
+                    "WASAPI host API. Check CABLE Input in Windows sound settings, then Refresh."
+                )
+            output = min(cable_outputs, key=lambda item: int(item["id"]))
+            return requested_input_id, int(output["id"]), False, True, inventory
 
     snapshot = _snapshot_for_selection(
         sample_rate=sample_rate,

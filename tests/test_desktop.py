@@ -38,6 +38,36 @@ def test_window_has_no_basic_model_or_output_controls(monkeypatch):
     app.processEvents()
 
 
+def test_windows_startup_times_out_and_shows_diagnostics(monkeypatch):
+    monkeypatch.setattr(BridgeWindow, "discover", lambda self: None)
+    monkeypatch.setattr("dpdfnet_mic_bridge.desktop.platform.system", lambda: "Windows")
+    app = QApplication.instance() or QApplication([])
+    window = BridgeWindow()
+    monkeypatch.setattr(
+        window, "spawn", lambda mode, args: setattr(window, "mode", mode)
+    )
+    window.start_bridge()
+    assert window.startup_deadline.isActive()
+
+    class Process:
+        killed = False
+
+        def kill(self):
+            self.killed = True
+
+    process = Process()
+    window.process = process
+    window.startup_timed_out()
+    assert process.killed
+    assert window.forced
+    assert "90 seconds" in window.log.toPlainText()
+    assert not window.log.isHidden()
+    window.startup_deadline.stop()
+    window.process = None
+    window.close()
+    app.processEvents()
+
+
 def test_health_events_update_status_and_notify_once(monkeypatch):
     import json
 

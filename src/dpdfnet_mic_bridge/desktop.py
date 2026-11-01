@@ -103,6 +103,9 @@ class BridgeWindow(QMainWindow):
         self.deadline = QTimer(self)
         self.deadline.setSingleShot(True)
         self.deadline.timeout.connect(self.force_stop)
+        self.startup_deadline = QTimer(self)
+        self.startup_deadline.setSingleShot(True)
+        self.startup_deadline.timeout.connect(self.startup_timed_out)
         self.vbcable_setup_timer = QTimer(self)
         self.vbcable_setup_timer.timeout.connect(self.check_vbcable_setup)
         QTimer.singleShot(0, self.discover)
@@ -141,6 +144,8 @@ class BridgeWindow(QMainWindow):
         self.inference_degraded = False
         self._health_sequence = 0
         self.status.setText("Loading model and starting audio…")
+        if platform.system() == "Windows":
+            self.startup_deadline.start(90000)
         self.spawn(
             "worker",
             ["_desktop-worker", "--device", str(self.microphones.currentData())],
@@ -235,6 +240,18 @@ class BridgeWindow(QMainWindow):
             )
             self.process.kill()
 
+    def startup_timed_out(self):
+        if self.process is None or self.mode != "worker" or self.stopping:
+            return
+        self.forced = True
+        self.log.appendPlainText(
+            "Windows audio startup did not finish within 90 seconds. "
+            "The child process is being stopped; see the preceding diagnostics "
+            "for the last completed startup stage."
+        )
+        self.log.show()
+        self.process.kill()
+
     def read_output(self):
         self.buffer += bytes(self.process.readAllStandardOutput()).decode(
             "utf-8", errors="replace"
@@ -286,6 +303,7 @@ class BridgeWindow(QMainWindow):
                     else "Choose an available microphone and complete audio setup, then Refresh."
                 )
             elif message.get("event") == "ready" and not self.stopping:
+                self.startup_deadline.stop()
                 if not self.inference_degraded:
                     self.status.setText("Streaming enhanced microphone audio.")
             elif message.get("event") == "endpoints":
@@ -394,6 +412,7 @@ class BridgeWindow(QMainWindow):
 
     def finished(self, code, exit_status):
         self.deadline.stop()
+        self.startup_deadline.stop()
         self.read_output()
         self.read_error()
         if self.buffer.strip():
