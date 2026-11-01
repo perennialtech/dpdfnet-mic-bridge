@@ -63,10 +63,9 @@ def windows_vbcable_capture_name(
         ]
         if len(peers) == 1 and len(paired) == 1:
             return str(paired[0]["name"])
-        # Some virtual drivers assign distinct pin containers. If there is
-        # only one cable of this family, the pairing remains unambiguous.
-        if len(renders) != 1 or len(captures) != 1:
-            return None
+        # Both native IDs are present but disagree. Never fall back to a
+        # display-name guess, even if each family has only one endpoint.
+        return None
     # For legacy inventories with no container identity, only a single
     # unambiguous render/capture pair is safe; matching names alone are not.
     if len(renders) == 1 and len(captures) == 1:

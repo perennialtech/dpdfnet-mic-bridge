@@ -298,3 +298,117 @@ def test_duplicate_playback_names_can_use_distinct_container_identity(monkeypatc
     route = config.build_run_config(_args(), app_microphone_name=None)
     assert route.output_device_id == 3
     assert route.app_microphone_name == "CABLE Output (VB-Audio Virtual Cable)"
+
+
+def test_conflicting_native_container_ids_reject_single_cable_pair(monkeypatch):
+    original = _inventory()
+    inventory = AudioInventory(
+        devices=[
+            (
+                {
+                    **item,
+                    "name": (
+                        "Studio Playback" if item["id"] == 3 else "Conference Capture"
+                    ),
+                    "device_description": "VB-Audio Virtual Cable",
+                    "manufacturer": "VB-Audio Software",
+                    "container_id": (
+                        "render-driver" if item["id"] == 3 else "other-driver"
+                    ),
+                }
+                if item["id"] in (3, 7)
+                else item
+            )
+            for item in original.devices
+            if item["id"] not in (5, 6)
+        ],
+        hostapi_names=original.hostapi_names,
+    )
+    _setup(monkeypatch, inventory)
+    with pytest.raises(ValueError, match="missing or ambiguous"):
+        config.build_run_config(_args(output=3), app_microphone_name=None)
+
+
+def test_driver_family_rejects_conflicting_renamed_capture_label(monkeypatch):
+    from dpdfnet_mic_bridge.audio.tags import vb_cable_family
+
+    original = _inventory()
+    inventory = AudioInventory(
+        devices=[
+            (
+                {
+                    **item,
+                    "device_description": (
+                        "VB-Audio Cable A" if item["id"] == 5 else "VB-Audio Cable B"
+                    ),
+                    "name": (
+                        "CABLE-A Output (renamed)" if item["id"] == 6 else item["name"]
+                    ),
+                }
+                if item["id"] in (5, 6)
+                else item
+            )
+            for item in original.devices
+            if item["id"] not in (3, 7)
+        ],
+        hostapi_names=original.hostapi_names,
+    )
+    _setup(monkeypatch, inventory)
+    capture = next(item for item in inventory.devices if item["id"] == 6)
+    assert vb_cable_family(capture, "output") is None
+    with pytest.raises(ValueError, match="missing or ambiguous"):
+        config.build_run_config(_args(output=5), app_microphone_name=None)
+
+
+def test_cli_automatic_output_identifies_fully_renamed_cable(monkeypatch):
+    from dpdfnet_mic_bridge.audio import probing
+
+    scan_probes = device_selection.scan_device_probes
+    inventory = AudioInventory(
+        devices=[
+            {
+                "id": 1,
+                "name": "Microphone (USB)",
+                "hostapi": 0,
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+                "default_samplerate": 48000.0,
+            },
+            {
+                "id": 2,
+                "name": "Studio Playback",
+                "hostapi": 0,
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "default_samplerate": 48000.0,
+                "manufacturer": "VB-Audio Software",
+                "device_description": "VB-Audio Virtual Cable",
+                "container_id": "cable-1",
+            },
+            {
+                "id": 3,
+                "name": "Conference Capture",
+                "hostapi": 0,
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+                "default_samplerate": 48000.0,
+                "manufacturer": "VB-Audio Software",
+                "device_description": "VB-Audio Virtual Cable",
+                "container_id": "cable-1",
+            },
+        ],
+        hostapi_names=["Windows WASAPI"],
+    )
+    _setup(monkeypatch, inventory)
+    monkeypatch.setattr(device_selection, "scan_device_probes", scan_probes)
+    monkeypatch.setattr(probing, "probe_device_channels", lambda **kw: (1, ()))
+    monkeypatch.setattr(config, "negotiate_full_duplex_channels", lambda **kw: (1, 2))
+    route = config.build_run_config(
+        SimpleNamespace(
+            model="dpdfnet8_48khz_hr", input=None, output=None, latency="high"
+        ),
+        app_microphone_name=None,
+    )
+    assert (route.input_device_id, route.output_device_id) == (1, 2)
+    assert route.app_microphone_name == "Conference Capture"
+    assert route.input_was_auto_selected and route.output_was_auto_selected

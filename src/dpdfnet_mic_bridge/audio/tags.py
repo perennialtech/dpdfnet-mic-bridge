@@ -11,24 +11,33 @@ _CABLE_DRIVER = re.compile(r"\bcable(?:-|\s+)([a-d])\b", re.I)
 def vb_cable_family(device: str | dict, direction: str) -> str | None:
     name = str(device.get("name", "")) if isinstance(device, dict) else device
     match = _CABLE_ENDPOINT.search(name)
-    if match is not None and match.group(2).casefold() == direction:
-        return (match.group(1) or "").casefold()
+    name_family = (
+        (match.group(1) or "").casefold()
+        if match is not None and match.group(2).casefold() == direction
+        else None
+    )
     if not isinstance(device, dict):
-        return None
+        return name_family
 
     # User-visible Windows pin names are mutable. PortAudio's WASAPI
     # IMMDevice property store exposes driver-owned metadata independently.
     description = str(device.get("device_description", "")).casefold()
     manufacturer = str(device.get("manufacturer", "")).casefold()
-    if ("vb-audio" not in manufacturer and "vb-audio" not in description) or (
-        "cable" not in description
-    ):
-        return None
+    driver_is_cable = (
+        "vb-audio" in manufacturer or "vb-audio" in description
+    ) and "cable" in description
+    if not driver_is_cable:
+        return name_family
     channels = "max_output_channels" if direction == "input" else "max_input_channels"
     if int(device.get(channels, 0)) <= 0:
         return None
     family = _CABLE_DRIVER.search(description)
-    return family.group(1).casefold() if family else ""
+    driver_family = family.group(1).casefold() if family else ""
+    # Device display names can be changed independently on Windows. Never
+    # override positively identified driver families with a conflicting name.
+    if name_family is not None and name_family != driver_family:
+        return None
+    return driver_family
 
 
 def infer_device_tags(device: str | dict) -> tuple[str, ...]:

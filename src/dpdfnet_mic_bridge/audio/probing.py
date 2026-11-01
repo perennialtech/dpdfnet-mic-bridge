@@ -169,7 +169,7 @@ def build_device_probes(
             continue
 
         name = str(info["name"])
-        tags = infer_device_tags(name)
+        tags = infer_device_tags(info)
         default_sr = float(info["default_samplerate"])
 
         for direction, max_channel_key, bucket in direction_specs:
