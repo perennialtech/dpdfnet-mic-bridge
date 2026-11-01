@@ -49,3 +49,35 @@ def test_optional_models_are_explicit_local_only(monkeypatch, tmp_path):
         loading.resolve_local_model("dpdfnet2")
     (tmp_path / "dpdfnet2.onnx").write_bytes(b"local")
     assert loading.resolve_local_model("dpdfnet2") == tmp_path / "dpdfnet2.onnx"
+
+
+def test_desktop_model_smoke_invokes_inference(monkeypatch, capsys):
+    import numpy as np
+
+    from dpdfnet_mic_bridge import desktop_process
+
+    seen = []
+
+    class Enhancer:
+        def process(self, samples, sample_rate):
+            seen.append((samples.shape, samples.dtype, sample_rate))
+            return np.ones(480, dtype=np.float32)
+
+    monkeypatch.setattr(loading, "load_enhancer", lambda: Enhancer())
+    assert desktop_process.internal_command(["_desktop-model-test"]) == 0
+    assert seen == [((4800,), np.dtype("float32"), 48000)]
+    assert "Bundled model inference passed." in capsys.readouterr().out
+
+
+def test_desktop_model_smoke_rejects_invalid_output(monkeypatch):
+    import numpy as np
+
+    from dpdfnet_mic_bridge import desktop_process
+
+    class Enhancer:
+        def process(self, samples, sample_rate):
+            return np.array([float("nan")], dtype=np.float32)
+
+    monkeypatch.setattr(loading, "load_enhancer", lambda: Enhancer())
+    with pytest.raises(RuntimeError, match="no finite audio samples"):
+        desktop_process.internal_command(["_desktop-model-test"])

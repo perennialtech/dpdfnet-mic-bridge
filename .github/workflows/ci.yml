@@ -166,6 +166,9 @@ jobs:
           $gui = Start-Process dist\dpdfnet-mic-bridge\dpdfnet-mic-bridge.exe -ArgumentList "_desktop-ui-test" -PassThru
           if (-not $gui.WaitForExit(30000)) { $gui.Kill(); throw "Windowed desktop smoke test timed out" }
           if ($gui.ExitCode -ne 0) { throw "Windowed desktop smoke test failed" }
+      - name: Frozen Windows model inference
+        if: runner.os == 'Windows'
+        run: uv run --no-sync python packaging/check_model_smoke.py dist/dpdfnet-mic-bridge/dpdfnet-mic-bridge-cli.exe
       - name: Build Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
