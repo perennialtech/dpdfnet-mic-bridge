@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from contextlib import nullcontext
+import platform
 from typing import TYPE_CHECKING
 
 from ..audio.blocksize import MAX_AUTO_BLOCK_MS, iter_auto_block_sizes
-from ..audio.hostapi import same_hostapi_guidance
-from ..audio.inventory import hostapi_name_for_device
+from ..audio.hostapi import hostapi_filter_key_for_name, same_hostapi_guidance
+from ..audio.inventory import hostapi_name_for_device, query_audio_inventory
 from ..audio.probing import negotiate_full_duplex_channels
 from ..audio.route_validation import validate_backend_route
 from ..audio.tags import infer_device_tags
@@ -31,6 +33,65 @@ def build_run_config(
 
     This enforces sample-rate, host-API, channel, and block-size policy.
     """
+    if (
+        platform.system() == "Windows"
+        and args.input is not None
+        and args.output is None
+    ):
+        # A desktop-selected microphone needs only its matching WASAPI cable
+        # outputs, not a native probe of every installed Windows audio driver.
+        inventory = query_audio_inventory()
+        input_info = get_current_run_device_info(
+            inventory=inventory, device_id=args.input, role="input"
+        )
+        input_hostapi = hostapi_name_for_device(input_info, inventory.hostapi_names)
+        if hostapi_filter_key_for_name(input_hostapi) == "wasapi":
+            candidates = sorted(
+                (
+                    item
+                    for item in inventory.devices
+                    if hostapi_name_for_device(item, inventory.hostapi_names)
+                    == input_hostapi
+                    and int(item["max_output_channels"]) > 0
+                    and "vb-cable-playback" in infer_device_tags(str(item["name"]))
+                ),
+                key=lambda item: int(item["id"]),
+            )
+            if not candidates:
+                raise ValueError(
+                    "No VB-CABLE render endpoint is available on the selected microphone's "
+                    "WASAPI host API. Check CABLE Input in Windows sound settings, then Refresh."
+                )
+            failures = []
+            for item in candidates:
+                selected = argparse.Namespace(**vars(args))
+                selected.output = int(item["id"])
+                try:
+                    result = _build_run_config(
+                        selected,
+                        realtime_manager,
+                        app_microphone_name=app_microphone_name,
+                    )
+                except (ValueError, RuntimeError) as exc:
+                    failures.append(f"{item['name']} ({item['id']}): {exc}")
+                    continue
+                return replace(result, output_was_auto_selected=True)
+            raise RuntimeError(
+                "No matching WASAPI VB-CABLE output could open a full-duplex stream.\n"
+                + "\n".join(failures)
+            )
+
+    return _build_run_config(
+        args, realtime_manager, app_microphone_name=app_microphone_name
+    )
+
+
+def _build_run_config(
+    args: argparse.Namespace,
+    realtime_manager: RealtimeRuntimeManager | None = None,
+    *,
+    app_microphone_name: str | None,
+) -> RunConfig:
     sample_rate = model_native_sample_rate(args.model)
 
     requested_input_id = args.input
