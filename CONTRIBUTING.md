@@ -107,7 +107,7 @@ Use the Inno Setup version pinned in CI:
 
 ```powershell
 uv run --no-sync python packaging/stage_vbcable.py
-$version = uv run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])'
+$version = uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
 iscc "/DAppVersion=$version" packaging/dpdfnet-mic-bridge.iss
 ```
 
