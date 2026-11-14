@@ -26,6 +26,12 @@ from PySide6.QtWidgets import (
 from .desktop_process import child_command
 from . import vbcable
 
+_AUDIO_WARNING = "Audio processing can't keep up. Others may hear gaps."
+
+
+def _guidance(microphone):
+    return f"In your calling app, choose <b>{microphone}</b> as the microphone."
+
 
 class BridgeWindow(QMainWindow):
     def __init__(self):
@@ -44,7 +50,7 @@ class BridgeWindow(QMainWindow):
         self._health_sequence = 0
         self._notification_processes = set()
         self.vbcable_setup_process = None
-        self.status = QLabel("Looking for microphones…")
+        self.status = QLabel("Checking microphones…")
         self.tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(
@@ -63,13 +69,9 @@ class BridgeWindow(QMainWindow):
         self.stop.setEnabled(False)
         self.stop.clicked.connect(self.stop_bridge)
         name = "CABLE Output" if platform.system() == "Windows" else "DPDFNet_Mic"
-        self.guidance = QLabel(
-            f"In Discord or another calling app, select: <b>{name}</b>"
-        )
+        self.guidance = QLabel(_guidance(name))
         self.guidance.setWordWrap(True)
-        self.driver = QLabel(
-            'VB-CABLE is missing. <a href="https://vb-audio.com/Cable/">Get it from VB-Audio</a>, install its driver, then Refresh. The driver may need administrator approval and a restart.'
-        )
+        self.driver = QLabel()
         self.driver.setWordWrap(True)
         self.driver.setOpenExternalLinks(True)
         self.driver.hide()
@@ -80,10 +82,8 @@ class BridgeWindow(QMainWindow):
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(1500)
         self.log.hide()
-        diagnostics = QPushButton("Show/hide diagnostics")
-        diagnostics.clicked.connect(
-            lambda: self.log.setVisible(not self.log.isVisible())
-        )
+        self.diagnostics = QPushButton("Show details")
+        self.diagnostics.clicked.connect(self.toggle_diagnostics)
         layout = QVBoxLayout()
         layout.addWidget(QLabel("Microphone"))
         row = QHBoxLayout()
@@ -98,7 +98,7 @@ class BridgeWindow(QMainWindow):
         layout.addLayout(buttons)
         layout.addWidget(self.status)
         layout.addWidget(self.guidance)
-        layout.addWidget(diagnostics)
+        layout.addWidget(self.diagnostics)
         layout.addWidget(self.log)
         widget = QWidget()
         widget.setLayout(layout)
@@ -112,6 +112,17 @@ class BridgeWindow(QMainWindow):
         self.vbcable_setup_timer = QTimer(self)
         self.vbcable_setup_timer.timeout.connect(self.check_vbcable_setup)
         QTimer.singleShot(0, self.discover)
+
+    def show_diagnostics(self):
+        self.log.show()
+        self.diagnostics.setText("Hide details")
+
+    def toggle_diagnostics(self):
+        if self.log.isHidden():
+            self.show_diagnostics()
+        else:
+            self.log.hide()
+            self.diagnostics.setText("Show details")
 
     def spawn(self, mode, arguments):
         self.mode = mode
@@ -133,7 +144,7 @@ class BridgeWindow(QMainWindow):
         self.start.setEnabled(False)
         self.refresh.setEnabled(False)
         self.microphones.clear()
-        self.status.setText("Looking for microphones…")
+        self.status.setText("Checking microphones…")
         self.spawn("inventory", ["_desktop-inventory"])
 
     def start_bridge(self):
@@ -147,10 +158,8 @@ class BridgeWindow(QMainWindow):
         self.inference_degraded = False
         self._health_sequence = 0
         if platform.system() == "Windows":
-            self.guidance.setText(
-                "In Discord or another calling app, select: <b>CABLE Output</b>"
-            )
-        self.status.setText("Loading model and starting audio…")
+            self.guidance.setText(_guidance("CABLE Output"))
+        self.status.setText("Starting microphone…")
         if platform.system() == "Windows":
             self.startup_deadline.start(90000)
         self.spawn(
@@ -165,17 +174,15 @@ class BridgeWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "VB-CABLE already installed",
-                "The VB-CABLE driver is already registered. Restart Windows, then Refresh. "
-                "The vendor setup may offer to remove an installed driver.",
+                "VB-CABLE is already installed. Restart Windows, then click Refresh.",
             )
             return
         if (
             QMessageBox.question(
                 self,
                 "Install VB-CABLE?",
-                "VB-CABLE is a separate donationware driver by VB-Audio (www.vb-cable.com). "
-                "All contributions are welcome. Its setup will request administrator "
-                "approval, and you must restart Windows after installation. Continue?",
+                "VB-CABLE is a donationware driver from VB-Audio. Setup requires "
+                "administrator approval and a Windows restart. Open the installer?",
             )
             != QMessageBox.StandardButton.Yes
         ):
@@ -193,9 +200,8 @@ class BridgeWindow(QMainWindow):
         QMessageBox.information(
             self,
             "VB-CABLE installer launched",
-            "Complete installation in the VB-Audio window, restart Windows, "
-            "then return here and click Refresh. DPDFNet Mic Bridge will never "
-            "uninstall this shared driver.",
+            "Complete setup in the VB-Audio window, restart Windows, "
+            "then click Refresh here.",
         )
 
     def vbcable_setup_running(self):
@@ -224,8 +230,8 @@ class BridgeWindow(QMainWindow):
             self.install_driver.hide()
         else:
             self.driver.setText(
-                "VB-CABLE setup closed without registering the driver. "
-                "You can retry installation, or Refresh after restarting Windows."
+                "VB-CABLE wasn't installed. Run setup again, or restart Windows "
+                "and click Refresh."
             )
             self.install_driver.setVisible(vbcable.bundled_setup() is not None)
 
@@ -234,7 +240,7 @@ class BridgeWindow(QMainWindow):
             return
         self.stopping = True
         self.stop.setEnabled(False)
-        self.status.setText("Stopping and removing virtual audio endpoints…")
+        self.status.setText("Stopping microphone…")
         self.process.write(b"stop\n")
         self.process.closeWriteChannel()
         self.deadline.start(10000)
@@ -256,7 +262,7 @@ class BridgeWindow(QMainWindow):
             "The child process is being stopped; see the preceding diagnostics "
             "for the last completed startup stage."
         )
-        self.log.show()
+        self.show_diagnostics()
         self.process.kill()
 
     def read_output(self):
@@ -278,25 +284,27 @@ class BridgeWindow(QMainWindow):
                 )
                 self.driver.setVisible(missing_driver)
                 self.install_driver.hide()
+                driver_registered = (
+                    vbcable.driver_installed() if missing_driver else False
+                )
                 if missing_driver:
-                    if vbcable.driver_installed():
+                    if driver_registered:
                         self.driver.setText(
-                            "VB-CABLE is registered but its audio endpoints are missing. "
-                            "Restart Windows, check Sound settings, then Refresh. "
+                            "VB-CABLE isn't available as an audio device. "
+                            "Restart Windows, check Sound settings, then click Refresh. "
                             '<a href="https://vb-audio.com/Cable/">VB-Audio support</a>.'
                         )
                     else:
                         self.driver.setText(
-                            "VB-CABLE by VB-Audio is missing. It is donationware; "
-                            'all contributions are welcome. <a href="https://www.vb-cable.com">'
-                            "VB-Audio website</a>. Installation needs administrator "
-                            "approval and a restart."
+                            "VB-CABLE isn't installed. Install it, restart Windows, "
+                            "then click Refresh. "
+                            '<a href="https://www.vb-cable.com">VB-Audio website</a>.'
                         )
                         running = self.vbcable_setup_running()
                         if running:
                             self.driver.setText(
-                                "VB-CABLE setup was launched. Complete installation "
-                                "in the VB-Audio window, restart Windows, then Refresh."
+                                "Complete VB-CABLE setup in the VB-Audio window, "
+                                "restart Windows, then click Refresh."
                             )
                         self.install_driver.setVisible(
                             not running and vbcable.bundled_setup() is not None
@@ -304,20 +312,25 @@ class BridgeWindow(QMainWindow):
                 self.start.setEnabled(
                     bool(message["microphones"]) and message["driver_ready"]
                 )
-                self.status.setText(
-                    "Ready."
-                    if self.start.isEnabled()
-                    else "Choose an available microphone and complete audio setup, then Refresh."
-                )
+                if missing_driver:
+                    self.status.setText(
+                        "Restart Windows, then click Refresh."
+                        if driver_registered
+                        else "Install VB-CABLE, restart Windows, then click Refresh."
+                    )
+                elif not message["microphones"]:
+                    self.status.setText(
+                        "No microphones found. Connect one and click Refresh."
+                    )
+                else:
+                    self.status.setText("Ready to start.")
             elif message.get("event") == "ready" and not self.stopping:
                 self.startup_deadline.stop()
                 if message.get("microphone"):
                     microphone = escape(str(message["microphone"]))
-                    self.guidance.setText(
-                        f"In Discord or another calling app, select: <b>{microphone}</b>"
-                    )
+                    self.guidance.setText(_guidance(microphone))
                 if not self.inference_degraded:
-                    self.status.setText("Streaming enhanced microphone audio.")
+                    self.status.setText("Noise reduction is on.")
             elif message.get("event") == "endpoints":
                 self.endpoint = message
             elif (
@@ -336,13 +349,11 @@ class BridgeWindow(QMainWindow):
                     if self.inference_degraded:
                         continue
                     self.inference_degraded = True
-                    self.status.setText(
-                        "Inference is missing audio deadlines; your microphone may stutter."
-                    )
+                    self.status.setText(_AUDIO_WARNING)
                     self.notify_overload()
                 elif message.get("state") == "healthy":
                     self.inference_degraded = False
-                    self.status.setText("Streaming enhanced microphone audio.")
+                    self.status.setText("Noise reduction is on.")
 
     def read_error(self):
         diagnostics = bytes(self.process.readAllStandardError()).decode(
@@ -353,7 +364,7 @@ class BridgeWindow(QMainWindow):
 
     def notify_overload(self):
         title = "DPDFNet Mic Bridge"
-        detail = "Inference is missing audio deadlines; your microphone may stutter."
+        detail = _AUDIO_WARNING
         if platform.system() == "Linux":
             # Observe the exit status asynchronously. Successful process launch
             # does not mean the desktop notification server accepted the request.
@@ -411,7 +422,7 @@ class BridgeWindow(QMainWindow):
         if not succeeded and not self.closing:
             self._notification_fallback(
                 "DPDFNet Mic Bridge",
-                "Inference is missing audio deadlines; your microphone may stutter.",
+                _AUDIO_WARNING,
             )
         process.deleteLater()
         if self.closing and self.process is None and not self._notification_processes:
@@ -445,9 +456,9 @@ class BridgeWindow(QMainWindow):
                 "cleanup",
                 ["_desktop-cleanup", endpoint["sink"], json.dumps(endpoint["modules"])],
             )
-            self.status.setText("Checking virtual microphone cleanup…")
+            self.status.setText("Finishing shutdown…")
             if code != 0 and not self.stopping:
-                self.log.show()
+                self.show_diagnostics()
             return
         self.stop.setEnabled(False)
         self.refresh.setEnabled(True)
@@ -456,16 +467,15 @@ class BridgeWindow(QMainWindow):
             self.start.setEnabled(
                 self.microphones.count() > 0 and self.driver.isHidden()
             )
-            self.status.setText(
-                "Stopped."
-                if code == 0
-                else "The bridge stopped with an error. Open diagnostics for details."
-            )
+            if code == 0:
+                self.status.setText("Stopped.")
         if code != 0:
             self.status.setText(
-                "Audio setup or streaming failed. See diagnostics, then Refresh to retry."
+                "Couldn't list microphones. Check details and click Refresh."
+                if previous_mode == "inventory"
+                else "Audio failed. Check details, then click Refresh."
             )
-            self.log.show()
+            self.show_diagnostics()
         if self.closing:
             self.close()
 
