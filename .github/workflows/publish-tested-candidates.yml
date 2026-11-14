@@ -58,15 +58,15 @@ jobs:
           github-token: ${{ github.token }}
           pattern: sources-and-notices-*
           path: source-materials
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.6"
-      - run: uv python install 3.12.13
+          version: "0.13.8"
+      - run: uv python install 3.12.16
       - name: Assemble source materials and SHA-256 checksums
         run: |
           if ! command -v zstd >/dev/null; then sudo apt-get update && sudo apt-get install -y zstd; fi
-          uv run --no-project --python 3.12.13 python packaging/prepare_release_sources.py
-          uv run --no-project --python 3.12.13 python packaging/checksums.py
+          uv run --no-project --python 3.12.16 python packaging/prepare_release_sources.py
+          uv run --no-project --python 3.12.16 python packaging/checksums.py
           ls -lh release
           (cd release && sha256sum --check SHA256SUMS)
       - name: Publish release
