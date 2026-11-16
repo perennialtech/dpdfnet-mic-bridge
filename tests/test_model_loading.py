@@ -1,54 +1,27 @@
-import hashlib
 from types import SimpleNamespace
 import sys
 
 import pytest
 
 from dpdfnet_mic_bridge.models import loading
-from dpdfnet_mic_bridge.models.registry import DEFAULT_MODEL
+from dpdfnet_mic_bridge.models.registry import DEFAULT_MODEL, MODEL_SAMPLE_RATES
 
 
-def test_model_verifies_size_and_digest(tmp_path):
-    path = tmp_path / "model.onnx"
-    path.write_bytes(b"model")
-    manifest = {"size": 5, "sha256": hashlib.sha256(b"model").hexdigest()}
-    loading.verify_model(path, manifest)
-    path.write_bytes(b"other")
-    with pytest.raises(RuntimeError, match="checksum"):
-        loading.verify_model(path, manifest)
-    path.unlink()
-    with pytest.raises(RuntimeError, match="missing"):
-        loading.verify_model(path, manifest)
-
-
-def test_missing_default_is_a_packaging_error_not_a_download(monkeypatch, tmp_path):
-    monkeypatch.setattr(loading, "ASSETS", tmp_path)
-    monkeypatch.setattr(
-        loading, "default_manifest", lambda: {"filename": "model.onnx", "size": 1}
-    )
-    with pytest.raises(RuntimeError, match="bundled default model"):
-        loading.resolve_local_model(DEFAULT_MODEL)
-
-
-def test_load_passes_supported_explicit_onnx_path(monkeypatch, tmp_path):
-    path = tmp_path / "model.onnx"
-    monkeypatch.setattr(loading, "resolve_local_model", lambda model: path)
+@pytest.mark.parametrize("model", MODEL_SAMPLE_RATES)
+def test_load_uses_native_enhancer(monkeypatch, model):
     calls = []
     monkeypatch.setitem(
         sys.modules,
-        "dpdfnet",
+        "dpdfnet_native.stream",
         SimpleNamespace(StreamEnhancer=lambda **kwargs: calls.append(kwargs)),
     )
-    loading.load_enhancer()
-    assert calls == [{"model": DEFAULT_MODEL, "onnx_path": path, "verbose": False}]
+    loading.load_enhancer(model)
+    assert calls == [{"model": model}]
 
 
-def test_optional_models_are_explicit_local_only(monkeypatch, tmp_path):
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-    with pytest.raises(RuntimeError, match="Optional model"):
-        loading.resolve_local_model("dpdfnet2")
-    (tmp_path / "dpdfnet2.onnx").write_bytes(b"local")
-    assert loading.resolve_local_model("dpdfnet2") == tmp_path / "dpdfnet2.onnx"
+def test_legacy_onnx_model_name_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported model 'dpdfnet2'"):
+        loading.load_enhancer("dpdfnet2")
 
 
 def test_desktop_model_smoke_invokes_inference(monkeypatch, capsys):
@@ -59,13 +32,24 @@ def test_desktop_model_smoke_invokes_inference(monkeypatch, capsys):
     seen = []
 
     class Enhancer:
+        def __init__(self, model):
+            self.model = model
+
         def process(self, samples, sample_rate):
-            seen.append((samples.shape, samples.dtype, sample_rate))
+            seen.append((self.model, samples.shape, samples.dtype, sample_rate))
             return np.ones(480, dtype=np.float32)
 
-    monkeypatch.setattr(loading, "load_enhancer", lambda: Enhancer())
+        def close(self):
+            seen.append((self.model, "closed"))
+
+    monkeypatch.setattr(loading, "load_enhancer", Enhancer)
     assert desktop_process.internal_command(["_desktop-model-test"]) == 0
-    assert seen == [((4800,), np.dtype("float32"), 48000)]
+    assert seen == [
+        ("dpdfnet2_48khz_hr", (4800,), np.dtype("float32"), 48000),
+        ("dpdfnet2_48khz_hr", "closed"),
+        (DEFAULT_MODEL, (4800,), np.dtype("float32"), 48000),
+        (DEFAULT_MODEL, "closed"),
+    ]
     assert "Bundled model inference passed." in capsys.readouterr().out
 
 
@@ -78,6 +62,9 @@ def test_desktop_model_smoke_rejects_invalid_output(monkeypatch):
         def process(self, samples, sample_rate):
             return np.array([float("nan")], dtype=np.float32)
 
-    monkeypatch.setattr(loading, "load_enhancer", lambda: Enhancer())
+        def close(self):
+            pass
+
+    monkeypatch.setattr(loading, "load_enhancer", lambda _: Enhancer())
     with pytest.raises(RuntimeError, match="no finite audio samples"):
         desktop_process.internal_command(["_desktop-model-test"])

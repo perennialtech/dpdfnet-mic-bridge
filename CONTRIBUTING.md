@@ -28,16 +28,14 @@ your compatible library.
 From the repository root:
 
 ```sh
-python packaging/stage_model.py
 uv sync --locked
 uv run --no-sync dpdfnet-mic-bridge
 ```
 
-Staging downloads only the pinned default model and license card, checks both
-hashes, and writes generated assets under `src/dpdfnet_mic_bridge/assets/models/`.
-It never copies a developer's user cache. `uv sync` builds
-`dpdfnet_mic_bridge._native_audio` with maturin. Build tools are not runtime
-dependencies.
+`uv sync` installs the platform's pinned `dpdfnet-native` wheel, which includes
+the DPDFNet runtime and both models, and builds the bridge's PortAudio extension
+with maturin. Source builds use the same x86-64 AVX2 and FMA requirement as the
+packaged releases.
 
 ## Tests
 
@@ -46,6 +44,7 @@ uv run --no-sync pytest -q
 uv run --no-sync ruff check src tests packaging
 uv run --no-sync black --check src tests packaging
 uv run --no-sync python -m dpdfnet_mic_bridge --help
+uv run --no-sync python -m dpdfnet_mic_bridge _desktop-model-test
 ```
 
 Unit tests do not need physical microphones or modify audio-server settings.
@@ -61,11 +60,10 @@ its disposable runner; the application itself never starts a server.
 
 ## Build a folder bundle
 
-Use a clean checkout on each target OS; PyInstaller does not cross-compile.
-Stage assets before the non-editable installation:
+Use a clean checkout on each target OS. Stage the Qt notices before the
+non-editable installation.
 
 ```sh
-python packaging/stage_model.py
 python packaging/stage_qt_notices.py
 uv sync --locked --no-dev --group bundle --no-editable
 uv build --wheel --out-dir build/release-wheel
@@ -150,9 +148,9 @@ Review the following before claiming production compatibility. Legal review
 and real-hardware tests cannot be replaced by hosted CI.
 
 - Audit Python/Rust licenses, Qt third-party attributions, native libraries,
-  model licensing, and corresponding sources. The weights' Apache-2.0 declaration
-  is in their pinned model card, separate from this application's MIT license.
-  Audit libraries automatically selected by PyInstaller as well as staged clients.
+  model licensing, and corresponding sources. The pinned `dpdfnet-native`
+  release provides the runtime and the weights under Apache-2.0. Audit libraries
+  automatically selected by PyInstaller as well as staged clients.
 - Confirm each LGPL component's corresponding sources and required build
   materials are available with the release. CI retains Qt/Rust sources and
   matching Ubuntu client-library sources. Superseded Ubuntu source versions are

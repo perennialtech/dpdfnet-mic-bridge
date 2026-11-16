@@ -8,8 +8,9 @@ microphone in your calling or recording app. Keep the bridge open while using it
 
 Download the latest package from
 [GitHub Releases](https://github.com/perennialtech/dpdfnet-mic-bridge/releases).
-Both packages include the application and its default model for offline CPU
-processing. No Python or separate model download is needed.
+Both packages include the DPDFNet runtime and two 48 kHz models for offline
+processing. They require an x86-64 CPU with AVX2 and FMA. Python and the
+model files are included.
 
 | Platform | Download | Microphone to select in other apps |
 | --- | --- | --- |
@@ -87,14 +88,15 @@ Replace `15` with a microphone ID shown by `devices`. IDs can change after a
 microphone is reconnected or the audio session restarts. Stop streaming with
 `Ctrl+C`.
 
-Run `--help` or `run --help` for the available options. For other locally
-obtained ONNX models, set `DPDFNET_MODEL_DIR` and use `run --model`. The bridge
-does not download models automatically.
+Run `--help` or `run --help` for the available options. The desktop and CLI
+use `dpdfnet8_48khz_hr` by default. Use `run --model dpdfnet2_48khz_hr` for
+lower CPU usage. Custom ONNX models are no longer supported.
 
 ## Source and licenses
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for source builds, tests, advanced audio
 options, and release verification. DPDFNet Mic Bridge is MIT-licensed. Its
-model, libraries, and VB-CABLE have separate terms; see the
-[third-party notices](packaging/THIRD_PARTY_NOTICES.md) and the notices supplied
-with each release. For the upstream model, see [Ceva's DPDFNet](https://github.com/ceva-ip/DPDFNet).
+models, libraries, and VB-CABLE have separate terms. The runtime and model
+weights come from [perennialtech/DPDFNet](https://github.com/perennialtech/DPDFNet).
+See the [third-party notices](packaging/THIRD_PARTY_NOTICES.md) and the notices
+supplied with each release.

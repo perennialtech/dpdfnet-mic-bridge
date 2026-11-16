@@ -5,13 +5,14 @@ of the included interpreter, libraries, audio clients, or model weights.
 The `notices` directory contains license texts, package metadata, and native
 dependency provenance for this build.
 
-## Default model
+## DPDFNet runtime and models
 
-The unmodified `dpdfnet8_48khz_hr.onnx` weights are from
-[Ceva-IP/DPDFNet](https://huggingface.co/Ceva-IP/DPDFNet). Their revision,
-SHA-256, and the model card declaring Apache-2.0 are recorded in
-`assets/models/default.json`. The model card and Apache license are included
-with the release notices. Credit: Daniel Rika, Nino Sapir, and Ido Gus, Ceva.
+The [dpdfnet-native release](https://github.com/perennialtech/DPDFNet/releases/tag/v0.1.0)
+provides the native runtime and quantized `dpdfnet2_48khz_hr` and
+`dpdfnet8_48khz_hr` weights under Apache-2.0. The license is included in
+`notices/dpdfnet-native`. The models derive from
+[Ceva-IP/DPDFNet](https://huggingface.co/Ceva-IP/DPDFNet), credited to Daniel
+Rika, Nino Sapir, and Ido Gus, Ceva.
 
 ## Qt for Python
 

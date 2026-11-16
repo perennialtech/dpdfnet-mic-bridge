@@ -7,7 +7,9 @@
 
 Open DPDFNet Mic Bridge, select your microphone, and click **Start**. Then
 select the virtual microphone listed above in your calling or recording app.
-The default noise-reduction model is included and runs offline on the CPU.
+Both 48 kHz models run offline on an x86-64 CPU with AVX2 and FMA.
+The desktop uses `dpdfnet8_48khz_hr`. The CLI can also select
+`dpdfnet2_48khz_hr` with `run --model`.
 
 ### Requirements
 

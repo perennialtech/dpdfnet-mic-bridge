@@ -13,25 +13,6 @@ if sys.platform == "win32" and sys.stderr is None:
     sys.stderr = error_output
 
 
-def _cache_root() -> pathlib.Path:
-    if sys.platform == "win32":
-        root = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-        if root:
-            return pathlib.Path(root) / "dpdfnet-mic-bridge"
-
-    if sys.platform == "darwin":
-        return pathlib.Path.home() / "Library" / "Caches" / "dpdfnet-mic-bridge"
-
-    root = os.environ.get("XDG_CACHE_HOME", str(pathlib.Path.home() / ".cache"))
-    return pathlib.Path(root) / "dpdfnet-mic-bridge"
-
-
-cache_root = _cache_root()
-numba_cache = cache_root / "numba"
-numba_cache.mkdir(parents=True, exist_ok=True)
-
-os.environ.setdefault("NUMBA_CACHE_DIR", str(numba_cache))
-
 if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
     dll_directories = []
     base = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(sys.executable).parent))

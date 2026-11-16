@@ -96,16 +96,23 @@ def internal_command(argv: list[str]) -> int:
         print("Desktop window smoke test passed.", flush=True)
         return result
     if argv == ["_desktop-model-test"]:
+        from contextlib import closing
+
         import numpy as np
 
         from .models.loading import load_enhancer
+        from .models.registry import MODEL_SAMPLE_RATES
 
-        print("Initializing bundled model...", flush=True)
-        enhancer = load_enhancer()
-        print("Running bundled model inference...", flush=True)
-        output = enhancer.process(np.zeros(4800, dtype=np.float32), sample_rate=48000)
-        if not output.size or not np.isfinite(output).all():
-            raise RuntimeError("Bundled model produced no finite audio samples")
+        for model, rate in MODEL_SAMPLE_RATES.items():
+            print(f"Testing bundled model {model}...", flush=True)
+            with closing(load_enhancer(model)) as enhancer:
+                output = enhancer.process(
+                    np.zeros(rate // 10, dtype=np.float32), sample_rate=rate
+                )
+            if not output.size or not np.isfinite(output).all():
+                raise RuntimeError(
+                    f"Bundled model {model} produced no finite audio samples"
+                )
         print("Bundled model inference passed.", flush=True)
         return 0
     if argv == ["_desktop-inventory"]:
