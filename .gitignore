@@ -15,5 +15,3 @@ rust/native_audio/target
 release/
 AppDir/
 *.AppImage
-src/dpdfnet_mic_bridge/assets/models/**/*.onnx
-src/dpdfnet_mic_bridge/assets/models/MODEL_CARD.md

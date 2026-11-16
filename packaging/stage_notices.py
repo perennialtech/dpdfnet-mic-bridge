@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.metadata as metadata
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +10,6 @@ import shutil
 import subprocess
 import sys
 import sysconfig
-from urllib.request import urlopen
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -118,23 +116,6 @@ def main():
                     target = directory / str(file).replace("/", "_").replace("\\", "_")
                     shutil.copy2(source, target)
                     texts.append(target.name)
-        if name == "flatbuffers" and not texts:
-            if dist.version != "25.12.19":
-                raise RuntimeError(
-                    "Review the FlatBuffers source license for this version"
-                )
-            url = (
-                "https://raw.githubusercontent.com/google/flatbuffers/v25.12.19/LICENSE"
-            )
-            with urlopen(url, timeout=60) as response:
-                text = response.read()
-            if (
-                hashlib.sha256(text).hexdigest()
-                != "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
-            ):
-                raise RuntimeError("FlatBuffers license checksum mismatch")
-            (directory / "LICENSE.txt").write_bytes(text)
-            texts.append("LICENSE.txt")
         # Qt wheels omit license texts. The checked, source-derived Qt notices
         # directory is staged separately by stage_qt_notices.py.
         if not texts and name not in {
@@ -159,12 +140,6 @@ def main():
             "Run packaging/stage_qt_notices.py before collecting notices"
         )
     shutil.copytree(qt_notices, DEST / "qt", dirs_exist_ok=True)
-    # Reuse the runtime package's Apache license for the separately licensed
-    # weights, together with the pinned model card declaring their license.
-    model_license = next((DEST / "dpdfnet").glob("*LICENSE*"))
-    shutil.copy2(model_license, DEST / "LICENSE-model-Apache-2.0.txt")
-    card = ROOT / "src/dpdfnet_mic_bridge/assets/models/MODEL_CARD.md"
-    shutil.copy2(card, DEST / "MODEL_CARD.md")
     cargo = json.loads(
         subprocess.check_output(
             [

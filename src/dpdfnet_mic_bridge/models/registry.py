@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 MODEL_SAMPLE_RATES: dict[str, int] = {
-    "baseline": 16000,
-    "dpdfnet2": 16000,
-    "dpdfnet4": 16000,
-    "dpdfnet8": 16000,
     "dpdfnet2_48khz_hr": 48000,
     "dpdfnet8_48khz_hr": 48000,
 }

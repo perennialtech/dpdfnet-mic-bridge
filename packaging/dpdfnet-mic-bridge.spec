@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import sysconfig
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, copy_metadata
 
 # Freeze the installed wheel, not stale metadata in a source checkout.
 sys.path.insert(0, sysconfig.get_path("purelib"))
@@ -16,30 +16,10 @@ notices = root / "build" / "notices"
 if not (notices / "python-packages.json").is_file():
     raise RuntimeError("Complete packaging/stage_notices.py successfully before freezing")
 
-from dpdfnet_mic_bridge.models.loading import resolve_local_model
-from dpdfnet_mic_bridge.models.registry import DEFAULT_MODEL
-
-resolve_local_model(DEFAULT_MODEL)
 datas = [(str(notices), "notices")]
-binaries = []
-hiddenimports = []
-
-datas += collect_data_files("dpdfnet_mic_bridge")
+datas += collect_data_files("dpdfnet_native", includes=["_native/*.f32"])
 datas += copy_metadata("dpdfnet_mic_bridge", recursive=True)
-
-for pkg in [
-    "dpdfnet",
-    "numba",
-    "llvmlite",
-    "librosa",
-    "onnxruntime",
-]:
-    pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(pkg)
-    datas += pkg_datas
-    binaries += pkg_binaries
-    hiddenimports += pkg_hiddenimports
-
-    datas += copy_metadata(pkg)
+binaries = collect_dynamic_libs("dpdfnet_native")
 
 if sys.platform == "linux":
     pulse = root / "build" / "pulse"
@@ -73,7 +53,6 @@ a = Analysis(
     pathex=[root_path],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports,
     hookspath=[hooks_path],
     excludes=[
         "pytest",
